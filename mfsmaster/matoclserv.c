@@ -6462,11 +6462,14 @@ void matoclserv_ha_cluster_info(matoclserventry *eptr, const uint8_t *data, uint
 			ptr = matoclserv_create_packet(eptr, MATOCL_HA_CLUSTER_INFO, 4);
 			put32bit(&ptr, 0x12345678); /* Confirm we support HA transfer */
 			
+			/* Mark this connection for metadata transfer - don't kill it yet */
+			eptr->mode = DATA;
+			eptr->lastread = eptr->lastwrite = main_time();
+			
 			/* Schedule metadata transfer on this socket */
 			meta_sendall(eptr->sock);
 			
-			/* Close connection after transfer */
-			eptr->mode = KILL;
+			/* The connection will be closed by meta_sendall's child process */
 			return;
 		}
 	}
