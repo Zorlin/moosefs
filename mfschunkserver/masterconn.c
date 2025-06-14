@@ -1946,111 +1946,220 @@ void masterconn_write(masterconn *eptr,double now) {
 
 void masterconn_desc(struct pollfd *pdesc,uint32_t *ndesc) {
 	uint32_t pos = *ndesc;
-	masterconn *eptr = masterconnsingleton;
+	masterconn *eptr;
 
-	eptr->pdescpos = -1;
-	if (eptr->mode==FREE || eptr->sock<0) {
-		return;
+	// Handle multiple connections
+	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+		eptr->pdescpos = -1;
+		if (eptr->mode==FREE || eptr->sock<0) {
+			continue;
+		}
+		pdesc[pos].events = 0;
+		if (eptr->mode==DATA && eptr->input_end==0) {
+			pdesc[pos].events |= POLLIN;
+		}
+		if (((eptr->mode==DATA || eptr->mode==CLOSE) && eptr->outputhead!=NULL) || eptr->mode==CONNECTING) {
+			pdesc[pos].events |= POLLOUT;
+		}
+		if (pdesc[pos].events!=0) {
+			pdesc[pos].fd = eptr->sock;
+			eptr->pdescpos = pos;
+			pos++;
+		}
 	}
-	pdesc[pos].events = 0;
-	if (eptr->mode==DATA && eptr->input_end==0) {
-		pdesc[pos].events |= POLLIN;
-	}
-	if (((eptr->mode==DATA || eptr->mode==CLOSE) && eptr->outputhead!=NULL) || eptr->mode==CONNECTING) {
-		pdesc[pos].events |= POLLOUT;
-	}
-	if (pdesc[pos].events!=0) {
-		pdesc[pos].fd = eptr->sock;
-		eptr->pdescpos = pos;
-		pos++;
+	
+	// Fall back to singleton if no HA connections
+	if (masterconnections == NULL && masterconnsingleton != NULL) {
+		eptr = masterconnsingleton;
+		eptr->pdescpos = -1;
+		if (eptr->mode!=FREE && eptr->sock>=0) {
+			pdesc[pos].events = 0;
+			if (eptr->mode==DATA && eptr->input_end==0) {
+				pdesc[pos].events |= POLLIN;
+			}
+			if (((eptr->mode==DATA || eptr->mode==CLOSE) && eptr->outputhead!=NULL) || eptr->mode==CONNECTING) {
+				pdesc[pos].events |= POLLOUT;
+			}
+			if (pdesc[pos].events!=0) {
+				pdesc[pos].fd = eptr->sock;
+				eptr->pdescpos = pos;
+				pos++;
+			}
+		}
 	}
 	*ndesc = pos;
 }
 
 void masterconn_disconnection_check(void) {
-	masterconn *eptr = masterconnsingleton;
+	masterconn *eptr;
 	in_packetstruct *ipptr,*ipaptr;
 	out_packetstruct *opptr,*opaptr;
 	idlejob *ij,*nij;
 
-	if (eptr->mode==KILL || (eptr->mode==CLOSE && eptr->outputhead==NULL)) {
-		// masterconn_beforeclose(eptr);
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_NOTICE,"closing connection with master");
-		tcpclose(eptr->sock);
-		eptr->sock = -1;
-		if (eptr->input_packet) {
-			free(eptr->input_packet);
+	// Handle multiple connections
+	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+		if (eptr->mode==KILL || (eptr->mode==CLOSE && eptr->outputhead==NULL)) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_NOTICE,"closing connection with master %u.%u.%u.%u:%u",
+				(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
+				(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
+			tcpclose(eptr->sock);
+			eptr->sock = -1;
+			if (eptr->input_packet) {
+				free(eptr->input_packet);
+			}
+			ipptr = eptr->inputhead;
+			while (ipptr) {
+				ipaptr = ipptr;
+				ipptr = ipptr->next;
+				free(ipaptr);
+			}
+			opptr = eptr->outputhead;
+			while (opptr) {
+				opaptr = opptr;
+				opptr = opptr->next;
+				free(opaptr);
+			}
+			// Note: idlejobs handling might need per-connection management
+			if (eptr->registerstate == INPROGRESS) {
+				hdd_get_chunks_end();
+			}
+			if (eptr->registerstate == UNREGISTERED && eptr->mode==KILL) {
+				eptr->masteraddrvalid = 0;
+			}
+			eptr->mode = FREE;
 		}
-		ipptr = eptr->inputhead;
-		while (ipptr) {
-			ipaptr = ipptr;
-			ipptr = ipptr->next;
-			free(ipaptr);
+	}
+	
+	// Fall back to singleton if no HA connections
+	if (masterconnections == NULL && masterconnsingleton != NULL) {
+		eptr = masterconnsingleton;
+		if (eptr->mode==KILL || (eptr->mode==CLOSE && eptr->outputhead==NULL)) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_NOTICE,"closing connection with master");
+			tcpclose(eptr->sock);
+			eptr->sock = -1;
+			if (eptr->input_packet) {
+				free(eptr->input_packet);
+			}
+			ipptr = eptr->inputhead;
+			while (ipptr) {
+				ipaptr = ipptr;
+				ipptr = ipptr->next;
+				free(ipaptr);
+			}
+			opptr = eptr->outputhead;
+			while (opptr) {
+				opaptr = opptr;
+				opptr = opptr->next;
+				free(opaptr);
+			}
+			for (ij=idlejobs ; ij ; ij=nij) {
+				nij = ij->next;
+				job_pool_disable_job(ij->jobid);
+				ij->next = NULL;
+				ij->prev = NULL;
+				ij->valid = 0;
+			}
+			idlejobs = NULL;
+			if (eptr->registerstate == INPROGRESS) {
+				hdd_get_chunks_end();
+			}
+			if (eptr->registerstate == UNREGISTERED && eptr->mode==KILL) {
+				eptr->masteraddrvalid = 0;
+			}
+			eptr->mode = FREE;
 		}
-		opptr = eptr->outputhead;
-		while (opptr) {
-			opaptr = opptr;
-			opptr = opptr->next;
-			free(opaptr);
-		}
-		for (ij=idlejobs ; ij ; ij=nij) {
-			nij = ij->next;
-			job_pool_disable_job(ij->jobid);
-			ij->next = NULL;
-			ij->prev = NULL;
-			ij->valid = 0;
-		}
-		idlejobs = NULL;
-		if (eptr->registerstate == INPROGRESS) {
-			hdd_get_chunks_end();
-		}
-		if (eptr->registerstate == UNREGISTERED && eptr->mode==KILL) {
-			eptr->masteraddrvalid = 0; // in new register mode always resolve master address
-		}
-		eptr->mode = FREE;
 	}
 }
 
 void masterconn_serve(struct pollfd *pdesc) {
 	double now;
-	masterconn *eptr = masterconnsingleton;
+	masterconn *eptr;
 
 	now = monotonic_seconds();
 
-	if (eptr->mode==CONNECTING) {
-		if (eptr->sock>=0 && eptr->pdescpos>=0 && (pdesc[eptr->pdescpos].revents & (POLLOUT | POLLHUP | POLLERR))) { // FD_ISSET(eptr->sock,wset)) {
-			masterconn_connecttest(eptr);
-		} else if (eptr->conntime+1.0 < now) {
-			masterconn_connecttimeout(eptr);
-		}
-	} else {
-		if (eptr->pdescpos>=0) {
-			if ((pdesc[eptr->pdescpos].revents & (POLLERR|POLLIN))==POLLIN && eptr->mode==DATA) {
-				masterconn_read(eptr,now);
+	// Handle multiple connections
+	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+		if (eptr->mode==CONNECTING) {
+			if (eptr->sock>=0 && eptr->pdescpos>=0 && (pdesc[eptr->pdescpos].revents & (POLLOUT | POLLHUP | POLLERR))) {
+				masterconn_connecttest(eptr);
+			} else if (eptr->conntime+1.0 < now) {
+				masterconn_connecttimeout(eptr);
 			}
-			if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: connection closed by master");
-				eptr->input_end = 1;
+		} else {
+			if (eptr->pdescpos>=0) {
+				if ((pdesc[eptr->pdescpos].revents & (POLLERR|POLLIN))==POLLIN && eptr->mode==DATA) {
+					masterconn_read(eptr,now);
+				}
+				if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: connection closed by master %u.%u.%u.%u:%u",
+						(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
+						(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
+					eptr->input_end = 1;
+				}
+				masterconn_parse(eptr);
 			}
-			masterconn_parse(eptr);
-		}
-		if ((eptr->mode==DATA || eptr->mode==CLOSE) && eptr->lastwrite+1.0<now && eptr->outputhead==NULL) {
-			masterconn_create_attached_packet(eptr,ANTOAN_NOP,0);
-		}
-		if (eptr->pdescpos>=0) {
-			if ((((pdesc[eptr->pdescpos].events & POLLOUT)==0 && (eptr->outputhead)) || (pdesc[eptr->pdescpos].revents & POLLOUT)) && (eptr->mode==DATA || eptr->mode==CLOSE)) {
-				masterconn_write(eptr,now);
+			if ((eptr->mode==DATA || eptr->mode==CLOSE) && eptr->lastwrite+1.0<now && eptr->outputhead==NULL) {
+				masterconn_create_attached_packet(eptr,ANTOAN_NOP,0);
+			}
+			if (eptr->pdescpos>=0) {
+				if ((((pdesc[eptr->pdescpos].events & POLLOUT)==0 && (eptr->outputhead)) || (pdesc[eptr->pdescpos].revents & POLLOUT)) && (eptr->mode==DATA || eptr->mode==CLOSE)) {
+					masterconn_write(eptr,now);
+				}
+			}
+			if (eptr->mode==DATA && eptr->lastread+eptr->timeout<now) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: connection timed out for master %u.%u.%u.%u:%u",
+					(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
+					(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
+				eptr->mode = KILL;
 			}
 		}
-		if (eptr->mode==DATA && eptr->lastread+eptr->timeout<now) {
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: connection timed out");
+		if (eptr->mode==CLOSE && wantexittime>0.0 && wantexittime+FORCE_DISCONNECTION_TO < now) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: unregistering timed out for master %u.%u.%u.%u:%u",
+				(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
+				(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
 			eptr->mode = KILL;
 		}
 	}
-	if (eptr->mode==CLOSE && wantexittime>0.0 && wantexittime+FORCE_DISCONNECTION_TO < now) {
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: unregistering timed out");
-		eptr->mode = KILL;
+	
+	// Fall back to singleton if no HA connections
+	if (masterconnections == NULL && masterconnsingleton != NULL) {
+		eptr = masterconnsingleton;
+		if (eptr->mode==CONNECTING) {
+			if (eptr->sock>=0 && eptr->pdescpos>=0 && (pdesc[eptr->pdescpos].revents & (POLLOUT | POLLHUP | POLLERR))) {
+				masterconn_connecttest(eptr);
+			} else if (eptr->conntime+1.0 < now) {
+				masterconn_connecttimeout(eptr);
+			}
+		} else {
+			if (eptr->pdescpos>=0) {
+				if ((pdesc[eptr->pdescpos].revents & (POLLERR|POLLIN))==POLLIN && eptr->mode==DATA) {
+					masterconn_read(eptr,now);
+				}
+				if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: connection closed by master");
+					eptr->input_end = 1;
+				}
+				masterconn_parse(eptr);
+			}
+			if ((eptr->mode==DATA || eptr->mode==CLOSE) && eptr->lastwrite+1.0<now && eptr->outputhead==NULL) {
+				masterconn_create_attached_packet(eptr,ANTOAN_NOP,0);
+			}
+			if (eptr->pdescpos>=0) {
+				if ((((pdesc[eptr->pdescpos].events & POLLOUT)==0 && (eptr->outputhead)) || (pdesc[eptr->pdescpos].revents & POLLOUT)) && (eptr->mode==DATA || eptr->mode==CLOSE)) {
+					masterconn_write(eptr,now);
+				}
+			}
+			if (eptr->mode==DATA && eptr->lastread+eptr->timeout<now) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: connection timed out");
+				eptr->mode = KILL;
+			}
+		}
+		if (eptr->mode==CLOSE && wantexittime>0.0 && wantexittime+FORCE_DISCONNECTION_TO < now) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: unregistering timed out");
+			eptr->mode = KILL;
+		}
 	}
+	
 	masterconn_disconnection_check();
 }
 
@@ -2059,9 +2168,21 @@ void masterconn_forcereconnect(void) {
 }
 
 void masterconn_reconnect(void) {
-	masterconn *eptr = masterconnsingleton;
-	if (eptr->mode==FREE && wantexittime==0.0) {
-		masterconn_initconnect(eptr);
+	masterconn *eptr;
+	
+	// Reconnect all masters in HA mode
+	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+		if (eptr->mode==FREE && wantexittime==0.0) {
+			masterconn_initconnect(eptr);
+		}
+	}
+	
+	// Fall back to singleton if no HA connections
+	if (masterconnections == NULL && masterconnsingleton != NULL) {
+		eptr = masterconnsingleton;
+		if (eptr->mode==FREE && wantexittime==0.0) {
+			masterconn_initconnect(eptr);
+		}
 	}
 }
 
@@ -2279,25 +2400,38 @@ int masterconn_init(void) {
 		Timeout=10;
 	}
 	masterconn_parselabels();
-	eptr = masterconnsingleton = malloc(sizeof(masterconn));
-	passert(eptr);
-
-	eptr->masteraddrvalid = 0;
-	eptr->masterversion = 0;
-	eptr->mode = FREE;
-	eptr->pdescpos = -1;
-	eptr->conncnt = 0;
-	if (Timeout>0) {
-		eptr->timeout = Timeout;
-	} else {
-		eptr->timeout = 10;
-	}
-//	logfd = NULL;
 
 	wantexittime = 0.0;
 
-	if (masterconn_initconnect(eptr)<0) {
-		return -1;
+	// Initialize HA connections to all masters
+	if (masterconn_init_ha_connections() < 0) {
+		// Fall back to single connection if HA init fails
+		eptr = masterconnsingleton = malloc(sizeof(masterconn));
+		passert(eptr);
+
+		eptr->masteraddrvalid = 0;
+		eptr->masterversion = 0;
+		eptr->mode = FREE;
+		eptr->pdescpos = -1;
+		eptr->conncnt = 0;
+		if (Timeout>0) {
+			eptr->timeout = Timeout;
+		} else {
+			eptr->timeout = 10;
+		}
+
+		if (masterconn_initconnect(eptr)<0) {
+			return -1;
+		}
+	} else {
+		// Initialize connections for all discovered masters
+		for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+			if (masterconn_initconnect(eptr) < 0) {
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"HA: failed to connect to master %u.%u.%u.%u:%u",
+					(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
+					(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
+			}
+		}
 	}
 
 	main_time_register(REPORT_LOAD_FREQ,0,masterconn_reportload);
