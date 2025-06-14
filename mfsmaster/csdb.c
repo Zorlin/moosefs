@@ -41,6 +41,8 @@
 #include "metadata.h"
 #include "multilan.h"
 #include "sockets.h"
+#include "hamaster.h"
+#include "crdtstore.h"
 
 #define CSDB_OP_ADD 0
 #define CSDB_OP_DEL 1
@@ -1043,5 +1045,91 @@ int csdb_init(void) {
 	main_reload_register(csdb_reload);
 	main_time_register(1,0,csdb_self_check);
 	main_time_register(600,300,csdb_remove_unused);
+	
+	/* In HA mode, periodically sync chunkservers from CRDT */
+	if (ha_mode_enabled()) {
+		main_time_register(1,0,csdb_sync_from_crdt);
+	}
+	
 	return 0;
+}
+
+/* Find chunkserver entry by IP and port */
+static csdbentry* csdb_find_entry(uint32_t ip, uint16_t port) {
+	uint32_t hash = CSDBHASHFN(ip, port);
+	csdbentry *csptr;
+	
+	for (csptr = csdbhash[hash]; csptr; csptr = csptr->next) {
+		if (csptr->ip == ip && csptr->port == port) {
+			return csptr;
+		}
+	}
+	return NULL;
+}
+
+/* Sync chunkserver list from CRDT store in HA mode */
+void csdb_sync_from_crdt(void) {
+	mfs_chunkserver_t *cs_array = NULL;
+	uint32_t cs_count = 0;
+	uint32_t i;
+	csdbentry *e;
+	crdt_store_t *store;
+	
+	if (!ha_mode_enabled()) {
+		return;
+	}
+	
+	store = crdtstore_get_main_store();
+	if (store == NULL) {
+		return;
+	}
+	
+	/* Get all registered chunkservers from CRDT */
+	if (crdtstore_get_all_chunkservers(store, &cs_array, &cs_count) < 0) {
+		return;
+	}
+	
+	/* Add/update chunkservers that exist in CRDT but not in local db */
+	for (i = 0; i < cs_count; i++) {
+		mfs_chunkserver_t *cs = &cs_array[i];
+		
+		/* Skip if already connected locally */
+		e = csdb_find_entry(cs->servip, cs->servport);
+		if (e != NULL && e->eptr != NULL) {
+			continue;
+		}
+		
+		/* Add to local database if not present */
+		if (e == NULL) {
+			uint32_t hash = CSDBHASHFN(cs->servip, cs->servport);
+			e = malloc(sizeof(csdbentry));
+			passert(e);
+			e->ip = cs->servip;
+			e->port = cs->servport;
+			e->csid = cs->csid ? cs->csid : nextid++;
+			e->number = 0;
+			e->heavyloadts = 0;
+			e->load = 0;
+			e->maintenance_timeout = 0;
+			e->disconnection_time = main_time();
+			e->maintenance = MAINTENANCE_OFF;
+			e->eptr = NULL; /* Not connected locally */
+			e->next = csdbhash[hash];
+			csdbhash[hash] = e;
+			
+			if (e->csid < 65536 && csdbtab[e->csid] == NULL) {
+				csdbtab[e->csid] = e;
+			}
+			
+			disconnected_servers++;
+			
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb_sync_from_crdt: added chunkserver %u.%u.%u.%u:%u from CRDT (csid=%u)",
+				(cs->servip>>24)&0xFF, (cs->servip>>16)&0xFF, (cs->servip>>8)&0xFF, cs->servip&0xFF, 
+				cs->servport, e->csid);
+		}
+	}
+	
+	if (cs_array) {
+		free(cs_array);
+	}
 }

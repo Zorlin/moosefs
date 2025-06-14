@@ -95,6 +95,52 @@ typedef struct {
 	uint32_t chunks;
 } mfs_node_t;
 
+/* Chunkserver operations */
+typedef struct {
+	uint32_t servip;
+	uint16_t servport;
+	uint16_t csid;
+	uint64_t usedspace;
+	uint64_t totalspace;
+	uint32_t chunkscount;
+	uint64_t todelusedspace;
+	uint64_t todeltotalspace;
+	uint32_t todelchunkscount;
+	uint32_t version;
+	uint16_t timeout;
+	uint8_t registered;   /* 0=unregistered, 1=registered */
+} mfs_chunkserver_t;
+
+/* Chunk version with hybrid approach 
+ * 
+ * Version Management Strategy:
+ * 1. The 'version' field remains sequential for chunkserver compatibility
+ * 2. Version increments are managed by the shard leader (via Raft consensus)
+ * 3. The 'last_modified' Lamport timestamp orders concurrent operations
+ * 4. On conflicts, the operation with higher timestamp wins
+ * 5. Version number conflicts are resolved by taking MAX(versions) + 1
+ *
+ * This ensures:
+ * - Chunkservers see monotonically increasing versions
+ * - CRDT operations converge across geo-distributed masters
+ * - No version rollbacks or gaps
+ */
+typedef struct {
+	uint32_t version;         /* Sequential version for chunkservers */
+	lamport_time_t last_modified; /* Vector clock for CRDT ordering */
+	uint32_t leader_node;     /* Which node last incremented version */
+} chunk_version_hybrid_t;
+
+/* Chunk operations */
+typedef struct {
+	uint64_t chunkid;
+	chunk_version_hybrid_t version_info; /* Hybrid versioning */
+	uint32_t storage_class;
+	uint8_t locked;
+	uint8_t archflag;
+	uint64_t lockedto;        /* Lock expiration timestamp */
+} mfs_chunk_crdt_t;
+
 /* Edge (directory entry) operations */
 typedef struct {
 	uint32_t parent_inode;
@@ -147,8 +193,14 @@ int crdtstore_put_node(crdt_store_t *store, const mfs_node_t *node);
 int crdtstore_get_node(crdt_store_t *store, uint32_t inode, mfs_node_t *node);
 int crdtstore_put_edge(crdt_store_t *store, const mfs_edge_t *edge);
 int crdtstore_get_edge(crdt_store_t *store, uint32_t parent, const char *name, mfs_edge_t **edge);
-int crdtstore_put_chunk(crdt_store_t *store, const mfs_chunk_t *chunk);
-int crdtstore_get_chunk(crdt_store_t *store, uint64_t chunkid, mfs_chunk_t *chunk);
+int crdtstore_put_chunk(crdt_store_t *store, const mfs_chunk_crdt_t *chunk);
+int crdtstore_get_chunk(crdt_store_t *store, uint64_t chunkid, mfs_chunk_crdt_t *chunk);
+
+/* Chunkserver operations */
+int crdtstore_put_chunkserver(crdt_store_t *store, const mfs_chunkserver_t *cs);
+int crdtstore_get_chunkserver(crdt_store_t *store, uint32_t servip, uint16_t servport, mfs_chunkserver_t *cs);
+int crdtstore_remove_chunkserver(crdt_store_t *store, uint32_t servip, uint16_t servport);
+int crdtstore_get_all_chunkservers(crdt_store_t *store, mfs_chunkserver_t **cs_array, uint32_t *count);
 
 /* Serialization for Raft log and ring deltas */
 int crdtstore_serialize_entry(const crdt_entry_t *entry, uint8_t **data, uint32_t *size);

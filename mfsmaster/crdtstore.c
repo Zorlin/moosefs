@@ -38,6 +38,7 @@
 #include "datapack.h"
 #include "metadata.h"
 #include "hamaster.h"
+#include "haconn.h"
 
 static crdt_store_t *main_store = NULL;
 static pthread_mutex_t store_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -244,6 +245,18 @@ int crdtstore_put(crdt_store_t *store, uint64_t key, crdt_type_t type,
 				entry->ts = ts;
 			}
 		}
+		
+		/* Broadcast the update to other nodes if HA mode is enabled */
+		if (ha_mode_enabled()) {
+			uint8_t *delta_data = NULL;
+			uint32_t delta_size = 0;
+			
+			if (crdtstore_serialize_entry(entry, &delta_data, &delta_size) == 0 && delta_data != NULL) {
+				haconn_send_crdt_delta(delta_data, delta_size);
+				free(delta_data);
+			}
+		}
+		
 		return 0;
 	}
 	
@@ -268,6 +281,17 @@ int crdtstore_put(crdt_store_t *store, uint64_t key, crdt_type_t type,
 	new_entry->next = store->table[hash];
 	store->table[hash] = new_entry;
 	store->entry_count++;
+	
+	/* Broadcast the change to other nodes if HA mode is enabled */
+	if (ha_mode_enabled()) {
+		uint8_t *delta_data = NULL;
+		uint32_t delta_size = 0;
+		
+		if (crdtstore_serialize_entry(new_entry, &delta_data, &delta_size) == 0 && delta_data != NULL) {
+			haconn_send_crdt_delta(delta_data, delta_size);
+			free(delta_data);
+		}
+	}
 	
 	return 0;
 }
@@ -837,4 +861,177 @@ static int try_sync_from_peer(const char *host, int port) {
 	close(sock);
 	mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_WARNING, "metadata download failed from %s:%d", host, port);
 	return -1;
+}
+
+/* Serialization for Raft log and ring deltas */
+int crdtstore_serialize_entry(const crdt_entry_t *entry, uint8_t **data, uint32_t *size) {
+	uint8_t *ptr;
+	uint32_t total_size;
+	
+	if (entry == NULL || data == NULL || size == NULL) {
+		return -1;
+	}
+	
+	/* Calculate total size */
+	total_size = 8 + 4 + 8 + 4 + 4 + 4 + entry->value_size;  /* key + type + timestamp + node_id + counter + value_size + value */
+	
+	*data = malloc(total_size);
+	if (*data == NULL) {
+		return -1;
+	}
+	
+	ptr = *data;
+	
+	/* Serialize fields */
+	put64bit(&ptr, entry->key);
+	put32bit(&ptr, entry->type);
+	put64bit(&ptr, entry->ts.timestamp);
+	put32bit(&ptr, entry->ts.node_id);
+	put32bit(&ptr, entry->ts.counter);
+	put32bit(&ptr, entry->value_size);
+	memcpy(ptr, entry->value, entry->value_size);
+	
+	*size = total_size;
+	return 0;
+}
+
+int crdtstore_deserialize_entry(const uint8_t *data, uint32_t size, crdt_entry_t **entry) {
+	const uint8_t *ptr = data;
+	crdt_entry_t *new_entry;
+	uint32_t value_size;
+	
+	if (data == NULL || entry == NULL || size < 32) {
+		return -1;
+	}
+	
+	new_entry = malloc(sizeof(crdt_entry_t));
+	if (new_entry == NULL) {
+		return -1;
+	}
+	
+	/* Deserialize fields */
+	new_entry->key = get64bit(&ptr);
+	new_entry->type = get32bit(&ptr);
+	new_entry->ts.timestamp = get64bit(&ptr);
+	new_entry->ts.node_id = get32bit(&ptr);
+	new_entry->ts.counter = get32bit(&ptr);
+	value_size = get32bit(&ptr);
+	
+	if (size < 32 + value_size) {
+		free(new_entry);
+		return -1;
+	}
+	
+	new_entry->value_size = value_size;
+	new_entry->value = malloc(value_size);
+	if (new_entry->value == NULL) {
+		free(new_entry);
+		return -1;
+	}
+	
+	memcpy(new_entry->value, ptr, value_size);
+	new_entry->next = NULL;
+	
+	*entry = new_entry;
+	return 0;
+}
+
+/* Chunkserver operations */
+
+/* Generate key for chunkserver entry */
+static uint64_t chunkserver_key(uint32_t servip, uint16_t servport) {
+	return ((uint64_t)servip << 16) | servport;
+}
+
+/* Put chunkserver information into CRDT store */
+int crdtstore_put_chunkserver(crdt_store_t *store, const mfs_chunkserver_t *cs) {
+	uint64_t key = chunkserver_key(cs->servip, cs->servport);
+	return crdtstore_put(store, key, CRDT_LWW_REGISTER, cs, sizeof(mfs_chunkserver_t));
+}
+
+/* Get chunkserver information from CRDT store */
+int crdtstore_get_chunkserver(crdt_store_t *store, uint32_t servip, uint16_t servport, mfs_chunkserver_t *cs) {
+	uint64_t key = chunkserver_key(servip, servport);
+	crdt_entry_t *entry;
+	
+	entry = crdtstore_get(store, key);
+	if (entry == NULL || entry->type != CRDT_LWW_REGISTER || entry->value_size != sizeof(mfs_chunkserver_t)) {
+		return -1;
+	}
+	
+	memcpy(cs, entry->value, sizeof(mfs_chunkserver_t));
+	return 0;
+}
+
+/* Remove chunkserver from CRDT store (mark as unregistered) */
+int crdtstore_remove_chunkserver(crdt_store_t *store, uint32_t servip, uint16_t servport) {
+	mfs_chunkserver_t cs;
+	uint64_t key = chunkserver_key(servip, servport);
+	crdt_entry_t *entry;
+	
+	/* Get existing entry */
+	entry = crdtstore_get(store, key);
+	if (entry == NULL || entry->type != CRDT_LWW_REGISTER || entry->value_size != sizeof(mfs_chunkserver_t)) {
+		/* Create new unregistered entry */
+		memset(&cs, 0, sizeof(cs));
+		cs.servip = servip;
+		cs.servport = servport;
+		cs.registered = 0;
+	} else {
+		/* Mark existing as unregistered */
+		memcpy(&cs, entry->value, sizeof(mfs_chunkserver_t));
+		cs.registered = 0;
+	}
+	
+	return crdtstore_put_chunkserver(store, &cs);
+}
+
+/* Get all registered chunkservers from CRDT store */
+int crdtstore_get_all_chunkservers(crdt_store_t *store, mfs_chunkserver_t **cs_array, uint32_t *count) {
+	uint32_t i, registered_count = 0;
+	crdt_entry_t *entry;
+	mfs_chunkserver_t *result;
+	uint32_t allocated = 0;
+	
+	*cs_array = NULL;
+	*count = 0;
+	
+	/* First pass: count registered chunkservers */
+	for (i = 0; i < store->table_size; i++) {
+		for (entry = store->table[i]; entry != NULL; entry = entry->next) {
+			if (entry->type == CRDT_LWW_REGISTER && entry->value_size == sizeof(mfs_chunkserver_t)) {
+				mfs_chunkserver_t *cs = (mfs_chunkserver_t *)entry->value;
+				if (cs->registered) {
+					registered_count++;
+				}
+			}
+		}
+	}
+	
+	if (registered_count == 0) {
+		return 0;
+	}
+	
+	/* Allocate result array */
+	result = malloc(registered_count * sizeof(mfs_chunkserver_t));
+	if (result == NULL) {
+		return -1;
+	}
+	
+	/* Second pass: copy registered chunkservers */
+	for (i = 0; i < store->table_size && allocated < registered_count; i++) {
+		for (entry = store->table[i]; entry != NULL && allocated < registered_count; entry = entry->next) {
+			if (entry->type == CRDT_LWW_REGISTER && entry->value_size == sizeof(mfs_chunkserver_t)) {
+				mfs_chunkserver_t *cs = (mfs_chunkserver_t *)entry->value;
+				if (cs->registered) {
+					memcpy(&result[allocated], cs, sizeof(mfs_chunkserver_t));
+					allocated++;
+				}
+			}
+		}
+	}
+	
+	*cs_array = result;
+	*count = allocated;
+	return 0;
 }

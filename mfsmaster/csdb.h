@@ -46,6 +46,7 @@ uint16_t csdb_getnumber(void *v_csptr);
 uint8_t csdb_store(bio *fd);
 int csdb_load(bio *fd,uint8_t mver,int ignoreflag);
 int csdb_init(void);
+void csdb_sync_from_crdt(void);
 uint8_t csdb_mr_op(uint8_t csop,uint32_t ip,uint16_t port,uint32_t arg);
 #define csdb_mr_csadd(x,y) csdb_mr_op(0,x,y,0)
 #define csdb_mr_csdel(x,y) csdb_mr_op(1,x,y,0)

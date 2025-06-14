@@ -48,6 +48,8 @@
 #include "main.h"
 #include "sockets.h"
 #include "chunks.h"
+#include "hamaster.h"
+#include "crdtstore.h"
 #include "random.h"
 #include "sizestr.h"
 #include "mfslog.h"
@@ -2652,6 +2654,32 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 				eptr->mode = KILL;
 				return;
 			}
+			
+			/* Sync chunkserver registration through CRDT if HA mode is enabled */
+			if (ha_mode_enabled()) {
+				mfs_chunkserver_t cs;
+				crdt_store_t *store = crdtstore_get_main_store();
+				
+				memset(&cs, 0, sizeof(cs));
+				cs.servip = eptr->servip;
+				cs.servport = eptr->servport;
+				cs.csid = csid;
+				cs.usedspace = eptr->usedspace;
+				cs.totalspace = eptr->totalspace;
+				cs.chunkscount = eptr->chunkscount;
+				cs.todelusedspace = eptr->todelusedspace;
+				cs.todeltotalspace = eptr->todeltotalspace;
+				cs.todelchunkscount = eptr->todelchunkscount;
+				cs.version = eptr->version;
+				cs.timeout = eptr->timeout;
+				cs.registered = 1;
+				
+				if (crdtstore_put_chunkserver(store, &cs) < 0) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"failed to sync chunkserver %s registration to CRDT", eptr->servdesc);
+				} else {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s registration synced to CRDT", eptr->servdesc);
+				}
+			}
 			us = (double)(eptr->usedspace)/(double)(1024*1024*1024);
 			ts = (double)(eptr->totalspace)/(double)(1024*1024*1024);
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s register begin, usedspace: %"PRIu64" (%.2lf GiB), totalspace: %"PRIu64" (%.2lf GiB)",eptr->servdesc,eptr->usedspace,us,eptr->totalspace,ts);
@@ -3380,6 +3408,17 @@ void matocsserv_disconnection_loop(void) {
 				chunk_server_disconnected(eptr->csid);
 			}
 			csdb_lost_connection(eptr->csptr);
+			
+			/* Sync chunkserver disconnection through CRDT if HA mode is enabled */
+			if (ha_mode_enabled() && eptr->servip > 0 && eptr->servport > 0) {
+				crdt_store_t *store = crdtstore_get_main_store();
+				
+				if (crdtstore_remove_chunkserver(store, eptr->servip, eptr->servport) < 0) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"failed to sync chunkserver %s disconnection to CRDT", eptr->servdesc);
+				} else {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s disconnection synced to CRDT", eptr->servdesc);
+				}
+			}
 			tcpclose(eptr->sock);
 			if (eptr->input_packet) {
 				free(eptr->input_packet);

@@ -27,6 +27,7 @@
 #include "datapack.h"
 #include "crc.h"
 #include "massert.h"
+#include "crdtstore.h"
 
 /* MFS HA Protocol message types */
 #define MFSHA_NOP             0x1000
@@ -218,9 +219,23 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 			
 		case MFSHA_CRDT_DELTA:
 			/* Forward to CRDT store */
-			if (length >= 8) {
-				/* TODO: Call crdtstore_apply_delta(data, length) */
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received CRDT delta, %u bytes", length);
+			if (length >= 32) {
+				crdt_entry_t *entry = NULL;
+				crdt_store_t *store = crdtstore_get_main_store();
+				
+				if (crdtstore_deserialize_entry(data, length, &entry) == 0 && entry != NULL) {
+					if (crdtstore_merge(store, entry) == 0) {
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: applied CRDT delta for key %"PRIu64" from node %u", 
+							entry->key, conn->peerid);
+					}
+					/* Free the deserialized entry */
+					if (entry->value) {
+						free(entry->value);
+					}
+					free(entry);
+				} else {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to deserialize CRDT delta");
+				}
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid CRDT delta size");
 			}
