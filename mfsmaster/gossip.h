@@ -23,4 +23,7 @@ void gossip_desc(struct pollfd *pdesc, uint32_t *ndesc);
 void gossip_serve(struct pollfd *pdesc);
 void gossip_info(FILE *fd);
 
+/* CRDT synchronization */
+void gossip_broadcast_changelog_entry(uint64_t version, const char *data, uint32_t data_len);
+
 #endif

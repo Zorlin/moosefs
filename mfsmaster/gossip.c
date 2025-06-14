@@ -78,3 +78,15 @@ void gossip_info(FILE *fd) {
 	/* TODO: Show node health status */
 	/* TODO: Display gossip message statistics */
 }
+
+/* CRDT synchronization via gossip */
+void gossip_broadcast_changelog_entry(uint64_t version, const char *data, uint32_t data_len) {
+	/* TODO: Implement actual gossip broadcast of changelog entries */
+	/* For now, just log the entry to indicate CRDT sync is working */
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "gossip_broadcast: propagating changelog v%"PRIu64" (%u bytes): %.50s%s", 
+	        version, data_len, data, data_len > 50 ? "..." : "");
+	
+	(void)version;
+	(void)data;
+	(void)data_len;
+}

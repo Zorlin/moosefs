@@ -126,6 +126,9 @@ crdt_store_t* crdtstore_create_with_cache(uint32_t node_id, uint32_t table_size,
                                          const char *backing_store_path);
 void crdtstore_destroy(crdt_store_t *store);
 
+/* Get main store instance */
+crdt_store_t* crdtstore_get_main_store(void);
+
 /* Entry management */
 int crdtstore_put(crdt_store_t *store, uint64_t key, crdt_type_t type, 
                   const void *value, uint32_t value_size);

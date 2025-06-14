@@ -206,6 +206,8 @@ typedef struct _ha_cluster {
 
 static ha_cluster_t ha_cluster = {NULL, 0, 8, NULL, 0, 0};
 
+#define FUSE_ROOT_ID 1
+
 static uint64_t usectimeout;
 static uint32_t maxretries;
 
@@ -411,44 +413,44 @@ static const uint8_t* fs_raw_sendandreceive(const uint8_t *buff, uint32_t size, 
 	return fs_sendandreceive(rec, expected_cmd, length);
 }
 
-static int ha_route_to_shard_owner(uint32_t inode, uint32_t cmd, const uint8_t *data, uint32_t size, const uint8_t **rptr, uint32_t *length) {
+// HA-aware sendandreceive that routes to correct shard owner
+static const uint8_t* fs_sendandreceive_ha(threc *rec, uint32_t inode, uint32_t cmd, uint32_t *length) {
 	uint32_t shard_id, target_node;
-	
-	(void)data; // Suppress unused parameter warning  
-	(void)size; // Suppress unused parameter warning
 	
 	if (!ha_cluster.ha_mode) {
 		// Fall back to regular single master communication  
-		threc *rec = fs_get_my_threc();
-		*rptr = fs_sendandreceive(rec, cmd + 1, length); // Response cmd = request cmd + 1
-		return (*rptr != NULL) ? 0 : -1;
+		return fs_sendandreceive(rec, cmd, length);
 	}
 	
 	shard_id = ha_get_shard_for_inode(inode);
 	
 	if (shard_id >= ha_cluster.shard_count) {
-		return -1;
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"HA: invalid shard %u for inode %u", shard_id, inode);
+		return NULL;
 	}
 	
 	target_node = ha_cluster.shard_to_node[shard_id];
 	
 	if (target_node >= ha_cluster.node_count) {
-		return -1;
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"HA: invalid target node %u for shard %u", target_node, shard_id);
+		return NULL;
 	}
 	
-	// Check if this is the local node (current connection)
+	// Check if this is the current connection's node
 	if (target_node == ha_cluster.current_node) {
 		// Route through current connection
-		threc *rec = fs_get_my_threc();
-		*rptr = fs_sendandreceive(rec, cmd + 1, length);
-		return (*rptr != NULL) ? 0 : -1;
+		return fs_sendandreceive(rec, cmd, length);
 	}
 	
-	// For now, always route through current connection
-	// TODO: Implement direct connection to target node
-	threc *rec = fs_get_my_threc();
-	*rptr = fs_sendandreceive(rec, cmd + 1, length);
-	return (*rptr != NULL) ? 0 : -1;
+	// For now, route through current connection with a warning
+	// TODO: Implement proper multi-connection support
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"HA: routing inode %u to node %u (shard %u) via current connection", inode, target_node, shard_id);
+	return fs_sendandreceive(rec, cmd, length);
+}
+
+// Wrapper for operations that don't have a specific inode (use root inode)
+static const uint8_t* fs_sendandreceive_ha_root(threc *rec, uint32_t cmd, uint32_t *length) {
+	return fs_sendandreceive_ha(rec, FUSE_ROOT_ID, cmd, length);
 }
 
 static inline void copy_attr(const uint8_t *rptr,uint8_t attr[ATTR_RECORD_SIZE],uint8_t asize) {
@@ -2998,7 +3000,7 @@ void fs_statfs(uint64_t *totalspace,uint64_t *availspace,uint64_t *freespace,uin
 		*inodes = 0;
 		return;
 	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_STATFS,&i);
+	rptr = fs_sendandreceive_ha_root(rec,MATOCL_FUSE_STATFS,&i);
 	if (rptr==NULL || (i!=36 && i!=44)) {
 		*totalspace = 0;
 		*availspace = 0;
@@ -3052,7 +3054,7 @@ uint8_t fs_access(uint32_t inode,uint32_t uid,uint32_t gids,uint32_t *gid,uint16
 		}
 		put16bit(&wptr,modemask);
 	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_ACCESS,&i);
+	rptr = fs_sendandreceive_ha(rec,inode,MATOCL_FUSE_ACCESS,&i);
 	if (!rptr || i!=1) {
 		ret = MFS_ERROR_IO;
 	} else {
@@ -3162,7 +3164,7 @@ uint8_t fs_simple_lookup(uint32_t parent,uint8_t nleng,const uint8_t *name,uint3
 			put32bit(&wptr,0xFFFFFFFF);
 		}
 	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_LOOKUP,&i);
+	rptr = fs_sendandreceive_ha(rec,parent,MATOCL_FUSE_LOOKUP,&i);
 	if (rptr==NULL) {
 		ret = MFS_ERROR_IO;
 	} else if (i==1) {
@@ -3218,7 +3220,7 @@ uint8_t fs_lookup(uint32_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid
 			put32bit(&wptr,0xFFFFFFFF);
 		}
 	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_LOOKUP,&i);
+	rptr = fs_sendandreceive_ha(rec,parent,MATOCL_FUSE_LOOKUP,&i);
 	if (rptr==NULL) {
 		ret = MFS_ERROR_IO;
 	} else if (i==1) {
@@ -3293,7 +3295,7 @@ uint8_t fs_getattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,uint8
 	}
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETATTR,&i);
+	rptr = fs_sendandreceive_ha(rec,inode,MATOCL_FUSE_GETATTR,&i);
 	if (rptr==NULL) {
 		ret = MFS_ERROR_IO;
 	} else if (i==1) {
@@ -3370,7 +3372,7 @@ uint8_t fs_setattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gids,uint
 	if (packetver>=1) {
 		put8bit(&wptr,sugidclearmode);
 	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_SETATTR,&i);
+	rptr = fs_sendandreceive_ha(rec,inode,MATOCL_FUSE_SETATTR,&i);
 	if (rptr==NULL) {
 		ret = MFS_ERROR_IO;
 	} else if (i==1) {

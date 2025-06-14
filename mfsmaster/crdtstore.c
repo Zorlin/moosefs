@@ -37,9 +37,21 @@
 #include "clocks.h"
 #include "datapack.h"
 #include "metadata.h"
+#include "hamaster.h"
 
 static crdt_store_t *main_store = NULL;
 static pthread_mutex_t store_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Get main store instance */
+crdt_store_t* crdtstore_get_main_store(void) {
+	pthread_mutex_lock(&store_mutex);
+	if (main_store == NULL) {
+		// Initialize main store if not created yet
+		main_store = crdtstore_create(ha_get_node_id(), 16384);
+	}
+	pthread_mutex_unlock(&store_mutex);
+	return main_store;
+}
 
 /* Hash function for CRDT entries */
 static inline uint32_t hash_key(uint64_t key, uint32_t table_size) {
