@@ -6447,6 +6447,29 @@ void matoclserv_ha_cluster_info(matoclserventry *eptr, const uint8_t *data, uint
 	uint32_t node_count = 1; // For now, just report this node
 	uint32_t shard_count;
 	uint32_t i;
+	uint32_t magic, request_type;
+	
+	/* Check for HA metadata download request (new protocol) */
+	if (length == 8) {
+		magic = get32bit(&data);
+		request_type = get32bit(&data);
+		
+		if (magic == 0x12345678 && request_type == 1) {
+			/* This is a metadata download request from cluster sync */
+			mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "received HA metadata download request from peer");
+			
+			/* Send acknowledgment */
+			ptr = matoclserv_create_packet(eptr, MATOCL_HA_CLUSTER_INFO, 4);
+			put32bit(&ptr, 0x12345678); /* Confirm we support HA transfer */
+			
+			/* Schedule metadata transfer on this socket */
+			meta_sendall(eptr->sock);
+			
+			/* Close connection after transfer */
+			eptr->mode = KILL;
+			return;
+		}
+	}
 	
 	if (!ha_mode_enabled()) {
 		// Not in HA mode, send error

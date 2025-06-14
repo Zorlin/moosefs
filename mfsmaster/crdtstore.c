@@ -726,6 +726,10 @@ static int try_sync_from_peer(const char *host, int port) {
 	struct sockaddr_in addr;
 	struct hostent *he;
 	int timeout = 10; /* 10 second timeout */
+	uint8_t packet[24];
+	uint8_t *wptr;
+	const uint8_t *rptr;
+	uint32_t cmd, length, version;
 	int result = -1;
 	
 	/* Create socket */
@@ -762,18 +766,63 @@ static int try_sync_from_peer(const char *host, int port) {
 		return -1;
 	}
 	
-	mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "connected to peer %s:%d, requesting metadata download", host, port);
+	mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "connected to peer %s:%d, performing HA cluster handshake", host, port);
 	
-	/* Use metadata download functionality */
-	result = meta_downloadall(sock);
+	/* Send HA cluster metadata request using MooseFS protocol */
+	wptr = packet;
+	put32bit(&wptr, CLTOMA_HA_CLUSTER_INFO); /* Use existing HA protocol message */
+	put32bit(&wptr, 8); /* length */
+	put32bit(&wptr, 0x12345678); /* magic for metadata request */
+	put32bit(&wptr, 1); /* request type: metadata download */
 	
-	close(sock);
-	
-	if (result > 0) {
-		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "metadata downloaded successfully from %s:%d", host, port);
-		return 0;
-	} else {
-		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_WARNING, "metadata download failed from %s:%d", host, port);
+	if (send(sock, packet, 16, 0) != 16) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "failed to send metadata request to %s:%d", host, port);
+		close(sock);
 		return -1;
 	}
+	
+	/* Read response header */
+	if (recv(sock, packet, 8, MSG_WAITALL) != 8) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "failed to receive response header from %s:%d", host, port);
+		close(sock);
+		return -1;
+	}
+	
+	rptr = packet;
+	cmd = get32bit(&rptr);
+	length = get32bit(&rptr);
+	
+	/* Check if peer supports HA metadata transfer */
+	if (cmd == MATOCL_HA_CLUSTER_INFO && length >= 4) {
+		/* Read response data */
+		if (recv(sock, packet, 4, MSG_WAITALL) != 4) {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "failed to receive response data from %s:%d", host, port);
+			close(sock);
+			return -1;
+		}
+		
+		rptr = packet;
+		version = get32bit(&rptr);
+		
+		if (version == 0x12345678) {
+			mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "peer %s:%d supports HA metadata transfer - downloading", host, port);
+			
+			/* Now use the established connection for metadata download */
+			result = meta_downloadall(sock);
+			
+			if (result > 0) {
+				mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "metadata downloaded successfully from %s:%d", host, port);
+				close(sock);
+				return 0;
+			}
+		} else {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "peer %s:%d does not support HA metadata transfer (version mismatch)", host, port);
+		}
+	} else {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "peer %s:%d does not support HA cluster protocol", host, port);
+	}
+	
+	close(sock);
+	mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_WARNING, "metadata download failed from %s:%d", host, port);
+	return -1;
 }

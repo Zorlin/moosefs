@@ -1545,12 +1545,14 @@ int meta_loadall(void) {
 			}
 			
 			/* Attempt CRDT cluster sync if HA mode is enabled */
-			if (ha_mode_enabled()) {
-				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"attempting cluster sync as fallback...");
+			if (getenv("MFSHA_NODE_ID") != NULL && getenv("MFSHA_PEERS") != NULL) {
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA mode detected - attempting cluster sync as fallback...");
 				if (crdt_cluster_sync_attempt() == 0) {
 					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"cluster sync successful - metadata loaded from peer");
 					return 0;
 				}
+			} else {
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA mode not enabled (MFSHA_NODE_ID or MFSHA_PEERS not set) - cannot attempt cluster sync");
 			}
 			
 			return -1;
