@@ -56,6 +56,7 @@ mfsmaster_SOURCES = \
 	crdtstore.c crdtstore.h \
 	raftconsensus.c raftconsensus.h \
 	gossip.c gossip.h \
+	gvc.c gvc.h \
 	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \

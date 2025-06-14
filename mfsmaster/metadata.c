@@ -58,6 +58,7 @@
 #include "metadata.h"
 #include "hamaster.h"
 #include "crdtstore.h"
+#include "gvc.h"
 #include "datapack.h"
 #include "sockets.h"
 #include "random.h"
@@ -1755,6 +1756,16 @@ int meta_loadall(void) {
 }
 
 uint64_t meta_version_inc(void) {
+	if (ha_mode_enabled()) {
+		/* In HA mode, use GVC for version allocation */
+		uint64_t new_version = gvc_get_next_version();
+		if (new_version > 0) {
+			metaversion = new_version;
+			return metaversion;
+		}
+		/* Fall back to local increment if GVC fails */
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"GVC version allocation failed, using local increment");
+	}
 	return metaversion++;
 }
 

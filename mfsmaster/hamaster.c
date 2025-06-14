@@ -11,6 +11,7 @@
 #include "crdtstore.h"
 #include "raftconsensus.h"
 #include "gossip.h"
+#include "gvc.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -91,6 +92,7 @@ int ha_initialize(void) {
         {crdtstore_init, "CRDT store"},
         {raftconsensus_init, "Raft consensus"},
         {gossip_init, "gossip protocol"},
+        {gvc_init, "global version coordinator"},
         {haconn_init, "HA communication"},
         {NULL, NULL}
     };

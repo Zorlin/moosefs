@@ -17,7 +17,8 @@
       "Bash(cp:*)",
       "Bash(./configure)",
       "Bash(git add:*)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(printf:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

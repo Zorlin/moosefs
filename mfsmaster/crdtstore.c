@@ -483,6 +483,22 @@ int crdtstore_get_edge(crdt_store_t *store, uint32_t parent, const char *name, m
 	return 0;
 }
 
+int crdtstore_remove_edge(crdt_store_t *store, const mfs_edge_t *edge) {
+	uint64_t key;
+	
+	if (store == NULL || edge == NULL) {
+		return -1;
+	}
+	
+	/* For removal, we need just the parent-child relationship */
+	/* Use a simple hash of parent_inode and child_inode */
+	key = ((uint64_t)edge->parent_inode << 32) | edge->child_inode;
+	
+	/* Mark as deleted in CRDT by storing a tombstone */
+	/* LWW register with NULL value acts as tombstone */
+	return crdtstore_put(store, key, CRDT_LWW_REGISTER, NULL, 0);
+}
+
 /* Chunk operations */
 int crdtstore_put_chunk(crdt_store_t *store, const mfs_chunk_crdt_t *chunk) {
 	if (store == NULL || chunk == NULL) {
@@ -513,18 +529,33 @@ int crdtstore_get_chunk(crdt_store_t *store, uint64_t chunkid, mfs_chunk_crdt_t 
 
 /* Global store management */
 int crdtstore_init(void) {
-	char *node_id_str;
 	uint32_t node_id = 1;
 	uint32_t table_size = 65536;
 	
-	node_id_str = cfg_getstr("HA_NODE_ID", "");
-	if (strlen(node_id_str) > 0) {
-		node_id = hash_key((uint64_t)node_id_str, 0xFFFFFFFF);
+	/* Get node ID from HA master module */
+	node_id = ha_get_node_id();
+	if (node_id == 0) {
+		/* Fall back to environment variable */
+		char *node_id_env = getenv("MFSHA_NODE_ID");
+		if (node_id_env != NULL) {
+			node_id = atoi(node_id_env);
+		}
+		if (node_id == 0) {
+			node_id = 1; /* Default */
+		}
 	}
 	
 	main_store = crdtstore_create(node_id, table_size);
 	if (main_store == NULL) {
 		mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "crdtstore_init: failed to create main store");
+		return -1;
+	}
+	
+	/* Initialize version mapper with proper shard count */
+	if (crdtstore_version_init(8) < 0) { /* 8 shards as per shardmgr_init */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "crdtstore_init: failed to initialize version mapper");
+		crdtstore_destroy(main_store);
+		main_store = NULL;
 		return -1;
 	}
 	

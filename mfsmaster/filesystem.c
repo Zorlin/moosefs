@@ -2454,6 +2454,23 @@ static inline void fsnodes_remove_edge(uint32_t ts,fsedge *e) {
 				break;
 		}
 		e->parent->eattr &= ~(EATTR_SNAPSHOT);
+		
+		/* Sync edge removal through CRDT if HA mode is enabled */
+		if (ha_mode_enabled()) {
+			mfs_edge_t edge;
+			crdt_store_t *store = crdtstore_get_main_store();
+			
+			memset(&edge, 0, sizeof(edge));
+			edge.parent_inode = e->parent->inode;
+			edge.child_inode = e->child->inode;
+			edge.name_len = e->nleng;
+			/* Note: name not needed for deletion, just the parent-child relationship */
+			
+			if (crdtstore_remove_edge(store, &edge) < 0) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"failed to sync edge removal %"PRIu32"->%"PRIu32" to CRDT", 
+					e->parent->inode, e->child->inode);
+			}
+		}
 	}
 	if (ts>0 && e->child) {
 		e->child->ctime = ts;

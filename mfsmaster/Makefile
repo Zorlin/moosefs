@@ -130,7 +130,7 @@ am_mfsmaster_OBJECTS = mfsmaster-itree.$(OBJEXT) \
 	mfsmaster-hamaster.$(OBJEXT) mfsmaster-shardmgr.$(OBJEXT) \
 	mfsmaster-haconn.$(OBJEXT) mfsmaster-crdtstore.$(OBJEXT) \
 	mfsmaster-raftconsensus.$(OBJEXT) mfsmaster-gossip.$(OBJEXT) \
-	../mfscommon/mfsmaster-main.$(OBJEXT) \
+	mfsmaster-gvc.$(OBJEXT) ../mfscommon/mfsmaster-main.$(OBJEXT) \
 	../mfscommon/mfsmaster-processname.$(OBJEXT) \
 	../mfscommon/mfsmaster-cfg.$(OBJEXT) \
 	../mfscommon/mfsmaster-random.$(OBJEXT) \
@@ -264,7 +264,7 @@ am__depfiles_remade = ../mfscommon/$(DEPDIR)/mfsmaster-cfg.Po \
 	./$(DEPDIR)/mfsmaster-exports.Po \
 	./$(DEPDIR)/mfsmaster-filesystem.Po \
 	./$(DEPDIR)/mfsmaster-flocklocks.Po \
-	./$(DEPDIR)/mfsmaster-gossip.Po \
+	./$(DEPDIR)/mfsmaster-gossip.Po ./$(DEPDIR)/mfsmaster-gvc.Po \
 	./$(DEPDIR)/mfsmaster-haconn.Po \
 	./$(DEPDIR)/mfsmaster-hamaster.Po \
 	./$(DEPDIR)/mfsmaster-iptosesid.Po \
@@ -553,6 +553,7 @@ mfsmaster_SOURCES = \
 	crdtstore.c crdtstore.h \
 	raftconsensus.c raftconsensus.h \
 	gossip.c gossip.h \
+	gvc.c gvc.h \
 	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \
@@ -873,6 +874,7 @@ include ./$(DEPDIR)/mfsmaster-exports.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-filesystem.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-flocklocks.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-gossip.Po # am--include-marker
+include ./$(DEPDIR)/mfsmaster-gvc.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-haconn.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-hamaster.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-iptosesid.Po # am--include-marker
@@ -1459,6 +1461,20 @@ mfsmaster-gossip.obj: gossip.c
 #	$(AM_V_CC)source='gossip.c' object='mfsmaster-gossip.obj' libtool=no \
 #	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
 #	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-gossip.obj `if test -f 'gossip.c'; then $(CYGPATH_W) 'gossip.c'; else $(CYGPATH_W) '$(srcdir)/gossip.c'; fi`
+
+mfsmaster-gvc.o: gvc.c
+	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-gvc.o -MD -MP -MF $(DEPDIR)/mfsmaster-gvc.Tpo -c -o mfsmaster-gvc.o `test -f 'gvc.c' || echo '$(srcdir)/'`gvc.c
+	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-gvc.Tpo $(DEPDIR)/mfsmaster-gvc.Po
+#	$(AM_V_CC)source='gvc.c' object='mfsmaster-gvc.o' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
+#	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-gvc.o `test -f 'gvc.c' || echo '$(srcdir)/'`gvc.c
+
+mfsmaster-gvc.obj: gvc.c
+	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-gvc.obj -MD -MP -MF $(DEPDIR)/mfsmaster-gvc.Tpo -c -o mfsmaster-gvc.obj `if test -f 'gvc.c'; then $(CYGPATH_W) 'gvc.c'; else $(CYGPATH_W) '$(srcdir)/gvc.c'; fi`
+	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-gvc.Tpo $(DEPDIR)/mfsmaster-gvc.Po
+#	$(AM_V_CC)source='gvc.c' object='mfsmaster-gvc.obj' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
+#	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-gvc.obj `if test -f 'gvc.c'; then $(CYGPATH_W) 'gvc.c'; else $(CYGPATH_W) '$(srcdir)/gvc.c'; fi`
 
 ../mfscommon/mfsmaster-main.o: ../mfscommon/main.c
 	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT ../mfscommon/mfsmaster-main.o -MD -MP -MF ../mfscommon/$(DEPDIR)/mfsmaster-main.Tpo -c -o ../mfscommon/mfsmaster-main.o `test -f '../mfscommon/main.c' || echo '$(srcdir)/'`../mfscommon/main.c
@@ -2059,6 +2075,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-filesystem.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-flocklocks.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-gossip.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-gvc.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-haconn.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-hamaster.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-iptosesid.Po
@@ -2172,6 +2189,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-filesystem.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-flocklocks.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-gossip.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-gvc.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-haconn.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-hamaster.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-iptosesid.Po

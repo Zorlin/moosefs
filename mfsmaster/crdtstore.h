@@ -226,6 +226,7 @@ int crdtstore_put_node(crdt_store_t *store, const mfs_node_t *node);
 int crdtstore_get_node(crdt_store_t *store, uint32_t inode, mfs_node_t *node);
 int crdtstore_put_edge(crdt_store_t *store, const mfs_edge_t *edge);
 int crdtstore_get_edge(crdt_store_t *store, uint32_t parent, const char *name, mfs_edge_t **edge);
+int crdtstore_remove_edge(crdt_store_t *store, const mfs_edge_t *edge);
 int crdtstore_put_chunk(crdt_store_t *store, const mfs_chunk_crdt_t *chunk);
 int crdtstore_get_chunk(crdt_store_t *store, uint64_t chunkid, mfs_chunk_crdt_t *chunk);
 
