@@ -22,8 +22,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/time.h>
 #include <errno.h>
 #include <pthread.h>
 #include <sys/socket.h>
@@ -42,6 +44,24 @@
 
 static crdt_store_t *main_store = NULL;
 static pthread_mutex_t store_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Version mapper instance */
+static version_mapper_t *version_mapper = NULL;
+
+/* Global HLC instance */
+static hlc_timestamp_t global_hlc;
+static pthread_mutex_t hlc_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Leader lease storage */
+typedef struct {
+	uint32_t node_id;
+	uint64_t epoch;
+	uint64_t expiry_us;
+} lease_info_t;
+
+static lease_info_t *shard_leases = NULL;
+static uint32_t shard_count = 0;
+static pthread_mutex_t lease_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Get main store instance */
 crdt_store_t* crdtstore_get_main_store(void) {
@@ -402,6 +422,92 @@ int crdtstore_get_node(crdt_store_t *store, uint32_t inode, mfs_node_t *node) {
 	}
 	
 	memcpy(node, entry->value, sizeof(mfs_node_t));
+	return 0;
+}
+
+/* Edge (directory entry) operations */
+static uint64_t edge_key(uint32_t parent, const char *name, uint16_t name_len) {
+	uint64_t key = parent;
+	uint16_t i;
+	
+	/* Combine parent inode with name hash */
+	for (i = 0; i < name_len; i++) {
+		key = key * 33 + name[i];
+	}
+	
+	return key;
+}
+
+int crdtstore_put_edge(crdt_store_t *store, const mfs_edge_t *edge) {
+	uint64_t key;
+	uint32_t total_size;
+	
+	if (store == NULL || edge == NULL) {
+		return -1;
+	}
+	
+	key = edge_key(edge->parent_inode, edge->name, edge->name_len);
+	total_size = offsetof(mfs_edge_t, name) + edge->name_len;
+	
+	return crdtstore_put(store, key, CRDT_LWW_REGISTER, edge, total_size);
+}
+
+int crdtstore_get_edge(crdt_store_t *store, uint32_t parent, const char *name, mfs_edge_t **edge) {
+	uint64_t key;
+	crdt_entry_t *entry;
+	uint16_t name_len;
+	
+	if (store == NULL || name == NULL || edge == NULL) {
+		return -1;
+	}
+	
+	name_len = strlen(name);
+	key = edge_key(parent, name, name_len);
+	entry = crdtstore_get(store, key);
+	
+	if (entry == NULL || entry->type != CRDT_LWW_REGISTER) {
+		return -1;
+	}
+	
+	/* Verify it's an edge entry */
+	if (entry->value_size < offsetof(mfs_edge_t, name)) {
+		return -1;
+	}
+	
+	*edge = malloc(entry->value_size);
+	if (*edge == NULL) {
+		return -1;
+	}
+	
+	memcpy(*edge, entry->value, entry->value_size);
+	return 0;
+}
+
+/* Chunk operations */
+int crdtstore_put_chunk(crdt_store_t *store, const mfs_chunk_crdt_t *chunk) {
+	if (store == NULL || chunk == NULL) {
+		return -1;
+	}
+	
+	return crdtstore_put(store, chunk->chunkid, CRDT_LWW_REGISTER,
+	                     chunk, sizeof(mfs_chunk_crdt_t));
+}
+
+int crdtstore_get_chunk(crdt_store_t *store, uint64_t chunkid, mfs_chunk_crdt_t *chunk) {
+	crdt_entry_t *entry;
+	
+	if (store == NULL || chunk == NULL) {
+		return -1;
+	}
+	
+	entry = crdtstore_get(store, chunkid);
+	
+	if (entry == NULL || entry->type != CRDT_LWW_REGISTER ||
+	    entry->value_size != sizeof(mfs_chunk_crdt_t)) {
+		return -1;
+	}
+	
+	memcpy(chunk, entry->value, sizeof(mfs_chunk_crdt_t));
 	return 0;
 }
 
@@ -986,52 +1092,488 @@ int crdtstore_remove_chunkserver(crdt_store_t *store, uint32_t servip, uint16_t 
 	return crdtstore_put_chunkserver(store, &cs);
 }
 
-/* Get all registered chunkservers from CRDT store */
+/* Get all chunkservers from CRDT store (both registered and unregistered) */
 int crdtstore_get_all_chunkservers(crdt_store_t *store, mfs_chunkserver_t **cs_array, uint32_t *count) {
-	uint32_t i, registered_count = 0;
+	uint32_t i, total_count = 0, result_idx = 0;
 	crdt_entry_t *entry;
 	mfs_chunkserver_t *result;
-	uint32_t allocated = 0;
 	
 	*cs_array = NULL;
 	*count = 0;
 	
-	/* First pass: count registered chunkservers */
+	/* First pass: count all chunkservers */
 	for (i = 0; i < store->table_size; i++) {
 		for (entry = store->table[i]; entry != NULL; entry = entry->next) {
 			if (entry->type == CRDT_LWW_REGISTER && entry->value_size == sizeof(mfs_chunkserver_t)) {
-				mfs_chunkserver_t *cs = (mfs_chunkserver_t *)entry->value;
-				if (cs->registered) {
-					registered_count++;
-				}
+				total_count++;
 			}
 		}
 	}
 	
-	if (registered_count == 0) {
+	if (total_count == 0) {
 		return 0;
 	}
 	
 	/* Allocate result array */
-	result = malloc(registered_count * sizeof(mfs_chunkserver_t));
+	result = malloc(total_count * sizeof(mfs_chunkserver_t));
 	if (result == NULL) {
 		return -1;
 	}
 	
-	/* Second pass: copy registered chunkservers */
-	for (i = 0; i < store->table_size && allocated < registered_count; i++) {
-		for (entry = store->table[i]; entry != NULL && allocated < registered_count; entry = entry->next) {
+	/* Second pass: copy all chunkservers */
+	for (i = 0; i < store->table_size && result_idx < total_count; i++) {
+		for (entry = store->table[i]; entry != NULL && result_idx < total_count; entry = entry->next) {
 			if (entry->type == CRDT_LWW_REGISTER && entry->value_size == sizeof(mfs_chunkserver_t)) {
 				mfs_chunkserver_t *cs = (mfs_chunkserver_t *)entry->value;
-				if (cs->registered) {
-					memcpy(&result[allocated], cs, sizeof(mfs_chunkserver_t));
-					allocated++;
-				}
+				memcpy(&result[result_idx], cs, sizeof(mfs_chunkserver_t));
+				result_idx++;
 			}
 		}
 	}
 	
 	*cs_array = result;
-	*count = allocated;
+	*count = result_idx;
 	return 0;
+}
+
+/* HLC Implementation */
+
+void hlc_init(hlc_timestamp_t *hlc) {
+	if (hlc == NULL) return;
+	
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	hlc->physical_time = tv.tv_sec * 1000000ULL + tv.tv_usec;
+	hlc->logical_counter = 0;
+}
+
+void hlc_update(hlc_timestamp_t *hlc, const hlc_timestamp_t *remote) {
+	if (hlc == NULL) return;
+	
+	pthread_mutex_lock(&hlc_mutex);
+	
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	uint64_t now_us = tv.tv_sec * 1000000ULL + tv.tv_usec;
+	
+	/* Update physical time to max(local_physical, remote_physical, now) */
+	uint64_t max_physical = now_us;
+	if (hlc->physical_time > max_physical) {
+		max_physical = hlc->physical_time;
+	}
+	if (remote != NULL && remote->physical_time > max_physical) {
+		max_physical = remote->physical_time;
+	}
+	
+	/* Update logical counter */
+	if (max_physical == hlc->physical_time && 
+	    (remote == NULL || max_physical == remote->physical_time)) {
+		/* All have same physical time, increment logical */
+		uint32_t max_logical = hlc->logical_counter;
+		if (remote != NULL && remote->logical_counter > max_logical) {
+			max_logical = remote->logical_counter;
+		}
+		hlc->logical_counter = max_logical + 1;
+	} else if (max_physical == hlc->physical_time) {
+		/* Local has max physical time */
+		hlc->logical_counter++;
+	} else if (remote != NULL && max_physical == remote->physical_time) {
+		/* Remote has max physical time */
+		hlc->logical_counter = remote->logical_counter + 1;
+	} else {
+		/* Current time has max physical time */
+		hlc->logical_counter = 0;
+	}
+	
+	hlc->physical_time = max_physical;
+	
+	pthread_mutex_unlock(&hlc_mutex);
+}
+
+int hlc_compare(const hlc_timestamp_t *a, const hlc_timestamp_t *b) {
+	if (a == NULL || b == NULL) return 0;
+	
+	if (a->physical_time < b->physical_time) return -1;
+	if (a->physical_time > b->physical_time) return 1;
+	
+	if (a->logical_counter < b->logical_counter) return -1;
+	if (a->logical_counter > b->logical_counter) return 1;
+	
+	return 0;
+}
+
+uint64_t hlc_to_physical_ms(const hlc_timestamp_t *hlc) {
+	if (hlc == NULL) return 0;
+	return hlc->physical_time / 1000; /* Convert microseconds to milliseconds */
+}
+
+/* Version Management Implementation */
+
+int crdtstore_version_init(uint32_t num_shards) {
+	pthread_mutex_lock(&store_mutex);
+	
+	if (version_mapper != NULL) {
+		pthread_mutex_unlock(&store_mutex);
+		return 0; /* Already initialized */
+	}
+	
+	/* Initialize version mapper */
+	version_mapper = malloc(sizeof(version_mapper_t));
+	if (version_mapper == NULL) {
+		pthread_mutex_unlock(&store_mutex);
+		return -1;
+	}
+	
+	version_mapper->table_size = 65536; /* 64K entries */
+	version_mapper->table = calloc(version_mapper->table_size, sizeof(version_mapping_t*));
+	if (version_mapper->table == NULL) {
+		free(version_mapper);
+		version_mapper = NULL;
+		pthread_mutex_unlock(&store_mutex);
+		return -1;
+	}
+	
+	version_mapper->next_monotonic = 1; /* Start from 1 */
+	pthread_mutex_init(&version_mapper->lock, NULL);
+	
+	/* Initialize shard leases */
+	shard_count = num_shards;
+	shard_leases = calloc(shard_count, sizeof(lease_info_t));
+	if (shard_leases == NULL) {
+		free(version_mapper->table);
+		free(version_mapper);
+		version_mapper = NULL;
+		pthread_mutex_unlock(&store_mutex);
+		return -1;
+	}
+	
+	/* Initialize global HLC */
+	hlc_init(&global_hlc);
+	
+	pthread_mutex_unlock(&store_mutex);
+	return 0;
+}
+
+void crdtstore_version_term(void) {
+	pthread_mutex_lock(&store_mutex);
+	
+	if (version_mapper != NULL) {
+		/* Free all mappings */
+		uint32_t i;
+		for (i = 0; i < version_mapper->table_size; i++) {
+			version_mapping_t *mapping = version_mapper->table[i];
+			while (mapping != NULL) {
+				version_mapping_t *next = mapping->next;
+				if (mapping->vector.shard_versions) {
+					free(mapping->vector.shard_versions);
+				}
+				if (mapping->vector.lease_epochs) {
+					free(mapping->vector.lease_epochs);
+				}
+				free(mapping);
+				mapping = next;
+			}
+		}
+		
+		pthread_mutex_destroy(&version_mapper->lock);
+		free(version_mapper->table);
+		free(version_mapper);
+		version_mapper = NULL;
+	}
+	
+	if (shard_leases != NULL) {
+		free(shard_leases);
+		shard_leases = NULL;
+		shard_count = 0;
+	}
+	
+	pthread_mutex_unlock(&store_mutex);
+}
+
+int crdtstore_version_new(uint32_t shard_id, uint64_t raft_index, 
+                         uint32_t leader_node, uint64_t lease_epoch,
+                         global_version_t *version) {
+	if (version == NULL || shard_id >= shard_count) {
+		return -1;
+	}
+	
+	/* Update HLC */
+	hlc_update(&global_hlc, NULL);
+	
+	/* Initialize version structure */
+	version->shard_count = shard_count;
+	version->shard_versions = calloc(shard_count, sizeof(uint64_t));
+	version->lease_epochs = calloc(shard_count, sizeof(uint64_t));
+	
+	if (version->shard_versions == NULL || version->lease_epochs == NULL) {
+		if (version->shard_versions) free(version->shard_versions);
+		if (version->lease_epochs) free(version->lease_epochs);
+		return -1;
+	}
+	
+	/* Set this shard's version */
+	version->shard_versions[shard_id] = raft_index;
+	version->lease_epochs[shard_id] = lease_epoch;
+	
+	/* Copy HLC */
+	pthread_mutex_lock(&hlc_mutex);
+	version->hlc = global_hlc;
+	pthread_mutex_unlock(&hlc_mutex);
+	
+	return 0;
+}
+
+int crdtstore_version_merge(const global_version_t *local, 
+                           const global_version_t *remote,
+                           global_version_t *result) {
+	uint32_t i;
+	
+	if (local == NULL || remote == NULL || result == NULL) {
+		return -1;
+	}
+	
+	/* Update HLC with remote time */
+	if (remote != NULL) {
+		hlc_update(&global_hlc, &remote->hlc);
+	}
+	
+	/* Allocate result arrays */
+	result->shard_count = (local->shard_count > remote->shard_count) ? 
+	                      local->shard_count : remote->shard_count;
+	result->shard_versions = calloc(result->shard_count, sizeof(uint64_t));
+	result->lease_epochs = calloc(result->shard_count, sizeof(uint64_t));
+	
+	if (result->shard_versions == NULL || result->lease_epochs == NULL) {
+		if (result->shard_versions) free(result->shard_versions);
+		if (result->lease_epochs) free(result->lease_epochs);
+		return -1;
+	}
+	
+	/* Merge shard versions - take maximum */
+	for (i = 0; i < result->shard_count; i++) {
+		uint64_t local_ver = (i < local->shard_count) ? local->shard_versions[i] : 0;
+		uint64_t remote_ver = (i < remote->shard_count) ? remote->shard_versions[i] : 0;
+		uint64_t local_epoch = (i < local->shard_count) ? local->lease_epochs[i] : 0;
+		uint64_t remote_epoch = (i < remote->shard_count) ? remote->lease_epochs[i] : 0;
+		
+		/* Take version with higher lease epoch, or higher version if epochs equal */
+		if (local_epoch > remote_epoch || 
+		    (local_epoch == remote_epoch && local_ver > remote_ver)) {
+			result->shard_versions[i] = local_ver;
+			result->lease_epochs[i] = local_epoch;
+		} else {
+			result->shard_versions[i] = remote_ver;
+			result->lease_epochs[i] = remote_epoch;
+		}
+	}
+	
+	/* Use merged HLC */
+	pthread_mutex_lock(&hlc_mutex);
+	result->hlc = global_hlc;
+	pthread_mutex_unlock(&hlc_mutex);
+	
+	return 0;
+}
+
+uint64_t crdtstore_version_to_monotonic(const global_version_t *version) {
+	if (version == NULL || version_mapper == NULL) {
+		return 0;
+	}
+	
+	/* Create deterministic hash of vector clock */
+	uint64_t hash = 14695981039346656037ULL; /* FNV-1a offset basis */
+	uint32_t i;
+	
+	/* Hash shard versions in order */
+	for (i = 0; i < version->shard_count; i++) {
+		hash ^= version->shard_versions[i];
+		hash *= 1099511628211ULL; /* FNV-1a prime */
+		hash ^= version->lease_epochs[i];
+		hash *= 1099511628211ULL;
+	}
+	
+	/* Hash HLC */
+	hash ^= version->hlc.physical_time;
+	hash *= 1099511628211ULL;
+	hash ^= version->hlc.logical_counter;
+	hash *= 1099511628211ULL;
+	
+	/* Store mapping */
+	pthread_mutex_lock(&version_mapper->lock);
+	
+	uint32_t slot = hash % version_mapper->table_size;
+	version_mapping_t *mapping = malloc(sizeof(version_mapping_t));
+	if (mapping != NULL) {
+		mapping->monotonic = version_mapper->next_monotonic++;
+		mapping->vector = *version; /* Shallow copy */
+		mapping->vector.shard_versions = malloc(version->shard_count * sizeof(uint64_t));
+		mapping->vector.lease_epochs = malloc(version->shard_count * sizeof(uint64_t));
+		
+		if (mapping->vector.shard_versions != NULL && mapping->vector.lease_epochs != NULL) {
+			memcpy(mapping->vector.shard_versions, version->shard_versions, 
+			       version->shard_count * sizeof(uint64_t));
+			memcpy(mapping->vector.lease_epochs, version->lease_epochs,
+			       version->shard_count * sizeof(uint64_t));
+			
+			mapping->next = version_mapper->table[slot];
+			version_mapper->table[slot] = mapping;
+		} else {
+			if (mapping->vector.shard_versions) free(mapping->vector.shard_versions);
+			if (mapping->vector.lease_epochs) free(mapping->vector.lease_epochs);
+			free(mapping);
+		}
+	}
+	
+	uint64_t monotonic = (mapping != NULL) ? mapping->monotonic : hash;
+	pthread_mutex_unlock(&version_mapper->lock);
+	
+	return monotonic;
+}
+
+int crdtstore_version_from_monotonic(uint64_t monotonic, global_version_t *version) {
+	if (version == NULL || version_mapper == NULL) {
+		return -1;
+	}
+	
+	pthread_mutex_lock(&version_mapper->lock);
+	
+	/* Search all slots for the monotonic version */
+	uint32_t i;
+	for (i = 0; i < version_mapper->table_size; i++) {
+		version_mapping_t *mapping = version_mapper->table[i];
+		while (mapping != NULL) {
+			if (mapping->monotonic == monotonic) {
+				/* Found it - deep copy */
+				version->shard_count = mapping->vector.shard_count;
+				version->hlc = mapping->vector.hlc;
+				version->shard_versions = malloc(version->shard_count * sizeof(uint64_t));
+				version->lease_epochs = malloc(version->shard_count * sizeof(uint64_t));
+				
+				if (version->shard_versions != NULL && version->lease_epochs != NULL) {
+					memcpy(version->shard_versions, mapping->vector.shard_versions,
+					       version->shard_count * sizeof(uint64_t));
+					memcpy(version->lease_epochs, mapping->vector.lease_epochs,
+					       version->shard_count * sizeof(uint64_t));
+					pthread_mutex_unlock(&version_mapper->lock);
+					return 0;
+				} else {
+					if (version->shard_versions) free(version->shard_versions);
+					if (version->lease_epochs) free(version->lease_epochs);
+					pthread_mutex_unlock(&version_mapper->lock);
+					return -1;
+				}
+			}
+			mapping = mapping->next;
+		}
+	}
+	
+	pthread_mutex_unlock(&version_mapper->lock);
+	return -1; /* Not found */
+}
+
+/* Leader Lease Management */
+
+int crdtstore_lease_acquire(uint32_t shard_id, uint32_t node_id, 
+                           uint64_t *lease_epoch, uint64_t *lease_expiry) {
+	if (shard_id >= shard_count || lease_epoch == NULL || lease_expiry == NULL) {
+		return -1;
+	}
+	
+	pthread_mutex_lock(&lease_mutex);
+	
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	uint64_t now_us = tv.tv_sec * 1000000ULL + tv.tv_usec;
+	
+	lease_info_t *lease = &shard_leases[shard_id];
+	
+	/* Check if lease is expired or unowned */
+	if (lease->expiry_us < now_us || lease->node_id == 0) {
+		/* Acquire lease */
+		lease->node_id = node_id;
+		lease->epoch++;
+		lease->expiry_us = now_us + 30000000; /* 30 second lease */
+		
+		*lease_epoch = lease->epoch;
+		*lease_expiry = lease->expiry_us;
+		
+		pthread_mutex_unlock(&lease_mutex);
+		return 0;
+	}
+	
+	/* Lease held by another node */
+	pthread_mutex_unlock(&lease_mutex);
+	return -1;
+}
+
+int crdtstore_lease_renew(uint32_t shard_id, uint32_t node_id,
+                         uint64_t lease_epoch, uint64_t *new_expiry) {
+	if (shard_id >= shard_count || new_expiry == NULL) {
+		return -1;
+	}
+	
+	pthread_mutex_lock(&lease_mutex);
+	
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	uint64_t now_us = tv.tv_sec * 1000000ULL + tv.tv_usec;
+	
+	lease_info_t *lease = &shard_leases[shard_id];
+	
+	/* Check ownership and epoch */
+	if (lease->node_id == node_id && lease->epoch == lease_epoch && 
+	    lease->expiry_us > now_us) {
+		/* Renew lease */
+		lease->expiry_us = now_us + 30000000; /* 30 second lease */
+		*new_expiry = lease->expiry_us;
+		
+		pthread_mutex_unlock(&lease_mutex);
+		return 0;
+	}
+	
+	pthread_mutex_unlock(&lease_mutex);
+	return -1;
+}
+
+int crdtstore_lease_release(uint32_t shard_id, uint32_t node_id, uint64_t lease_epoch) {
+	if (shard_id >= shard_count) {
+		return -1;
+	}
+	
+	pthread_mutex_lock(&lease_mutex);
+	
+	lease_info_t *lease = &shard_leases[shard_id];
+	
+	/* Check ownership and epoch */
+	if (lease->node_id == node_id && lease->epoch == lease_epoch) {
+		/* Release lease */
+		lease->node_id = 0;
+		lease->expiry_us = 0;
+		
+		pthread_mutex_unlock(&lease_mutex);
+		return 0;
+	}
+	
+	pthread_mutex_unlock(&lease_mutex);
+	return -1;
+}
+
+int crdtstore_lease_check(uint32_t shard_id, uint64_t lease_epoch) {
+	if (shard_id >= shard_count) {
+		return -1;
+	}
+	
+	pthread_mutex_lock(&lease_mutex);
+	
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	uint64_t now_us = tv.tv_sec * 1000000ULL + tv.tv_usec;
+	
+	lease_info_t *lease = &shard_leases[shard_id];
+	
+	/* Check if lease is valid */
+	int valid = (lease->epoch == lease_epoch && lease->expiry_us > now_us) ? 0 : -1;
+	
+	pthread_mutex_unlock(&lease_mutex);
+	return valid;
 }

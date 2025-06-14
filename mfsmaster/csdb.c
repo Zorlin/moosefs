@@ -1093,9 +1093,30 @@ void csdb_sync_from_crdt(void) {
 	for (i = 0; i < cs_count; i++) {
 		mfs_chunkserver_t *cs = &cs_array[i];
 		
-		/* Skip if already connected locally */
+		/* Find existing entry */
 		e = csdb_find_entry(cs->servip, cs->servport);
+		
+		/* Handle based on CRDT registration status */
+		if (cs->registered == 0) {
+			/* Chunkserver is marked as unregistered in CRDT */
+			if (e != NULL && e->eptr != NULL) {
+				/* It's connected locally but marked as disconnected in CRDT - disconnect it */
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb_sync_from_crdt: disconnecting chunkserver %u.%u.%u.%u:%u - marked as unregistered in CRDT",
+					(cs->servip>>24)&0xFF, (cs->servip>>16)&0xFF, (cs->servip>>8)&0xFF, cs->servip&0xFF, cs->servport);
+				e->disconnection_time = main_time();
+				e->eptr = NULL;
+				disconnected_servers++;
+				if (e->maintenance != MAINTENANCE_OFF) {
+					disconnected_servers_in_maintenance++;
+				}
+			}
+			/* If it's already disconnected or doesn't exist, nothing to do */
+			continue;
+		}
+		
+		/* Chunkserver is marked as registered in CRDT */
 		if (e != NULL && e->eptr != NULL) {
+			/* Already connected locally - skip */
 			continue;
 		}
 		

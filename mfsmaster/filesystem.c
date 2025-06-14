@@ -72,6 +72,8 @@
 #include "storageclass.h"
 #include "patterns.h"
 #include "missinglog.h"
+#include "hamaster.h"
+#include "crdtstore.h"
 #include "random.h"
 
 #define HASHTAB_LOBITS 24
@@ -2641,6 +2643,50 @@ fsnode* fsnodes_create_node(uint32_t ts,fsnode* node,uint16_t nleng,const uint8_
 	if (aclcopied&2) {
 		p->acldefflag = 1;
 	}
+	
+	/* Sync node creation through CRDT if HA mode is enabled */
+	if (ha_mode_enabled()) {
+		mfs_node_t crdt_node;
+		crdt_store_t *store = crdtstore_get_main_store();
+		
+		memset(&crdt_node, 0, sizeof(crdt_node));
+		crdt_node.inode = p->inode;
+		crdt_node.type = p->type;
+		crdt_node.storage_class = p->sclassid;
+		crdt_node.flags = p->eattr;
+		crdt_node.mode = p->mode;
+		crdt_node.uid = p->uid;
+		crdt_node.gid = p->gid;
+		crdt_node.atime = p->atime;
+		crdt_node.mtime = p->mtime;
+		crdt_node.ctime = p->ctime;
+		crdt_node.nlink = 0; /* Will be updated with link operations */
+		crdt_node.length = (p->type == TYPE_FILE) ? p->data.fdata.length : 0;
+		crdt_node.chunks = (p->type == TYPE_FILE) ? p->data.fdata.chunks : 0;
+		
+		if (crdtstore_put_node(store, &crdt_node) < 0) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"failed to sync node %"PRIu32" creation to CRDT", p->inode);
+		}
+		
+		/* Also sync the edge (directory entry) */
+		if (node != NULL && nleng > 0 && name != NULL) {
+			uint32_t edge_size = offsetof(mfs_edge_t, name) + nleng;
+			mfs_edge_t *edge = malloc(edge_size);
+			if (edge != NULL) {
+				edge->parent_inode = node->inode;
+				edge->child_inode = p->inode;
+				edge->name_len = nleng;
+				memcpy(edge->name, name, nleng);
+				
+				if (crdtstore_put_edge(store, edge) < 0) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"failed to sync edge %"PRIu32"->%"PRIu32" to CRDT", 
+						node->inode, p->inode);
+				}
+				free(edge);
+			}
+		}
+	}
+	
 	return p;
 }
 

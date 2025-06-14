@@ -20,6 +20,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <pthread.h>
 
 /* CRDT Store - manages metadata using Conflict-free Replicated Data Types */
 
@@ -111,34 +112,66 @@ typedef struct {
 	uint8_t registered;   /* 0=unregistered, 1=registered */
 } mfs_chunkserver_t;
 
-/* Chunk version with hybrid approach 
- * 
- * Version Management Strategy:
- * 1. The 'version' field remains sequential for chunkserver compatibility
- * 2. Version increments are managed by the shard leader (via Raft consensus)
- * 3. The 'last_modified' Lamport timestamp orders concurrent operations
- * 4. On conflicts, the operation with higher timestamp wins
- * 5. Version number conflicts are resolved by taking MAX(versions) + 1
- *
- * This ensures:
- * - Chunkservers see monotonically increasing versions
- * - CRDT operations converge across geo-distributed masters
- * - No version rollbacks or gaps
+/* Hybrid Logical Clock (HLC) for distributed timestamps
+ * Combines physical time with logical counter for causality
  */
 typedef struct {
-	uint32_t version;         /* Sequential version for chunkservers */
-	lamport_time_t last_modified; /* Vector clock for CRDT ordering */
-	uint32_t leader_node;     /* Which node last incremented version */
-} chunk_version_hybrid_t;
+	uint64_t physical_time;   /* Wall clock time in microseconds */
+	uint32_t logical_counter; /* Logical counter for same physical time */
+} hlc_timestamp_t;
+
+/* Global version using HLCs, vector clocks and leader leases
+ * 
+ * Version Management Strategy:
+ * 1. Leader leases ensure only one leader per shard can assign versions
+ * 2. Each shard uses its Raft log index as the version component
+ * 3. HLC provides global time ordering with causality
+ * 4. Vector clock tracks all shard versions for conflict resolution
+ * 5. Monotonic version computed for client compatibility
+ *
+ * This ensures:
+ * - Strong consistency within shards via leader leases
+ * - Causal consistency across shards via HLC
+ * - Deterministic conflict resolution via vector clocks
+ * - Backward compatibility with existing clients/chunkservers
+ */
+typedef struct {
+	uint32_t shard_id;        /* Shard that assigned this version */
+	uint64_t raft_index;      /* Position in shard's Raft log */
+	uint32_t leader_node;     /* Leader that assigned (has valid lease) */
+	hlc_timestamp_t hlc;      /* Hybrid logical clock timestamp */
+	uint64_t lease_epoch;     /* Leader lease epoch for validity */
+} shard_version_t;
+
+typedef struct {
+	uint32_t shard_count;                    /* Number of shards */
+	uint64_t *shard_versions;                /* Array: ShardID -> Latest RaftIndex */
+	hlc_timestamp_t hlc;                     /* Global HLC timestamp */
+	uint64_t *lease_epochs;                  /* Array: ShardID -> Current lease epoch */
+} global_version_t;
+
+/* Version mapper for client compatibility */
+typedef struct version_mapping {
+	uint64_t monotonic;                      /* Client-visible version */
+	global_version_t vector;                 /* Internal vector clock */
+	struct version_mapping *next;
+} version_mapping_t;
+
+typedef struct {
+	version_mapping_t **table;               /* Hash table of mappings */
+	uint32_t table_size;
+	uint64_t next_monotonic;                 /* Next monotonic version to assign */
+	pthread_mutex_t lock;
+} version_mapper_t;
 
 /* Chunk operations */
 typedef struct {
 	uint64_t chunkid;
-	chunk_version_hybrid_t version_info; /* Hybrid versioning */
+	global_version_t version;          /* Global vector clock version */
 	uint32_t storage_class;
 	uint8_t locked;
 	uint8_t archflag;
-	uint64_t lockedto;        /* Lock expiration timestamp */
+	uint64_t lockedto;               /* Lock expiration timestamp */
 } mfs_chunk_crdt_t;
 
 /* Edge (directory entry) operations */
@@ -216,6 +249,32 @@ void crdtstore_get_stats(crdt_store_t *store, uint32_t *entries, uint32_t *memor
 /* Clock management */
 lamport_time_t crdtstore_get_time(crdt_store_t *store);
 void crdtstore_update_clock(crdt_store_t *store, const lamport_time_t *remote_time);
+
+/* HLC management */
+void hlc_init(hlc_timestamp_t *hlc);
+void hlc_update(hlc_timestamp_t *hlc, const hlc_timestamp_t *remote);
+int hlc_compare(const hlc_timestamp_t *a, const hlc_timestamp_t *b);
+uint64_t hlc_to_physical_ms(const hlc_timestamp_t *hlc);
+
+/* Version management */
+int crdtstore_version_init(uint32_t shard_count);
+void crdtstore_version_term(void);
+int crdtstore_version_new(uint32_t shard_id, uint64_t raft_index, 
+                         uint32_t leader_node, uint64_t lease_epoch,
+                         global_version_t *version);
+int crdtstore_version_merge(const global_version_t *local, 
+                           const global_version_t *remote,
+                           global_version_t *result);
+uint64_t crdtstore_version_to_monotonic(const global_version_t *version);
+int crdtstore_version_from_monotonic(uint64_t monotonic, global_version_t *version);
+
+/* Leader lease management */
+int crdtstore_lease_acquire(uint32_t shard_id, uint32_t node_id, 
+                           uint64_t *lease_epoch, uint64_t *lease_expiry);
+int crdtstore_lease_renew(uint32_t shard_id, uint32_t node_id,
+                         uint64_t lease_epoch, uint64_t *new_expiry);
+int crdtstore_lease_release(uint32_t shard_id, uint32_t node_id, uint64_t lease_epoch);
+int crdtstore_lease_check(uint32_t shard_id, uint64_t lease_epoch);
 
 /* Cluster sync for bootstrapping */
 int crdt_cluster_sync_attempt(void);
