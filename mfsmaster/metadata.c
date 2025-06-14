@@ -1301,6 +1301,12 @@ int meta_downloadall(int socket) {
 		fs_printinfo();
 	}
 	mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metadata download ok");
+	/* HA Mode: Sync any missing metadata via CRDT after download */
+	if (ha_mode_enabled()) {
+		if (ha_metadata_sync() < 0) {
+			mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"HA metadata sync failed after download - continuing anyway");
+		}
+	}
 	return 1;
 }
 
@@ -2045,6 +2051,12 @@ int meta_init(void) {
 			return -1;
 		}
 		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metadata file has been loaded");
+		/* HA Mode: Sync any missing metadata via CRDT */
+		if (ha_mode_enabled()) {
+			if (ha_metadata_sync() < 0) {
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"HA metadata sync failed - continuing anyway");
+			}
+		}
 	} else {
 		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_ERR,"can't run master without metadata");
 		return -1;

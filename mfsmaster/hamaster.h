@@ -16,4 +16,11 @@ void ha_terminate(void);
 uint32_t ha_get_node_id(void);
 const char* ha_get_peers(void);
 
+/* Perform metadata sync after initial load
+ * This should be called after metadata is loaded from disk or peer
+ * It will sync any missing changelog entries via CRDT
+ * Returns 0 on success, -1 on error
+ */
+int ha_metadata_sync(void);
+
 #endif

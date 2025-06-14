@@ -28,6 +28,7 @@
 #include "crc.h"
 #include "massert.h"
 #include "crdtstore.h"
+#include "metasync.h"
 
 /* MFS HA Protocol message types */
 #define MFSHA_NOP             0x1000
@@ -43,9 +44,14 @@
 enum {
 	HACONN_FREE,
 	HACONN_CONNECTING,
+	HACONN_HANDSHAKE,
 	HACONN_CONNECTED,
 	HACONN_KILL
 };
+
+/* Handshake message types */
+#define MFSHA_HANDSHAKE_REQ   0x1100
+#define MFSHA_HANDSHAKE_RESP  0x1101
 
 /* Packet structures */
 typedef struct out_packet {
@@ -107,6 +113,17 @@ static void haconn_read(haconn_t *conn, double now);
 static void haconn_write(haconn_t *conn, double now);
 static void haconn_parse(haconn_t *conn);
 
+/* Send handshake request */
+static void haconn_send_handshake(haconn_t *conn) {
+	uint8_t *ptr;
+	
+	ptr = haconn_createpacket(conn, MFSHA_HANDSHAKE_REQ, 4);
+	if (ptr) {
+		put32bit(&ptr, my_nodeid);
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: sent handshake request with node_id %u", my_nodeid);
+	}
+}
+
 /* Create a new HA connection */
 static haconn_t* haconn_new(int sock) {
 	haconn_t *conn;
@@ -119,7 +136,7 @@ static haconn_t* haconn_new(int sock) {
 	conn->next = haconn_head;
 	haconn_head = conn;
 	
-	conn->mode = HACONN_CONNECTED;
+	conn->mode = HACONN_HANDSHAKE;
 	conn->sock = sock;
 	conn->pdescpos = -1;
 	conn->lastread = conn->lastwrite = conn->conntime = monotonic_seconds();
@@ -137,6 +154,9 @@ static haconn_t* haconn_new(int sock) {
 	
 	conn->outputhead = NULL;
 	conn->outputtail = &(conn->outputhead);
+	
+	/* Send handshake immediately */
+	haconn_send_handshake(conn);
 	
 	return conn;
 }
@@ -213,12 +233,52 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 	stats_packetsin++;
 	
 	switch (type) {
+		case MFSHA_HANDSHAKE_REQ: {
+			/* Received handshake request - send response */
+			if (length >= 4) {
+				const uint8_t *ptr = data;
+				uint8_t *resp;
+				conn->peerid = get32bit(&ptr);
+				
+				resp = haconn_createpacket(conn, MFSHA_HANDSHAKE_RESP, 4);
+				if (resp) {
+					put32bit(&resp, my_nodeid);
+				}
+				
+				conn->mode = HACONN_CONNECTED;
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: handshake complete with peer %u", conn->peerid);
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid handshake request");
+				conn->mode = HACONN_KILL;
+			}
+			break;
+		}
+		
+		case MFSHA_HANDSHAKE_RESP: {
+			/* Received handshake response */
+			if (length >= 4) {
+				const uint8_t *ptr = data;
+				conn->peerid = get32bit(&ptr);
+				conn->mode = HACONN_CONNECTED;
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: handshake complete with peer %u", conn->peerid);
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid handshake response");
+				conn->mode = HACONN_KILL;
+			}
+			break;
+		}
+		
 		case MFSHA_NOP:
 			/* Heartbeat - no action needed */
 			break;
 			
 		case MFSHA_CRDT_DELTA:
-			/* Forward to CRDT store */
+			/* Forward to CRDT store - only if connected */
+			if (conn->mode != HACONN_CONNECTED) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: received CRDT delta before handshake");
+				conn->mode = HACONN_KILL;
+				break;
+			}
 			if (length >= 32) {
 				crdt_entry_t *entry = NULL;
 				crdt_store_t *store = crdtstore_get_main_store();
@@ -285,9 +345,8 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 			
 		case MFSHA_META_SYNC:
 			/* Forward to metadata syncer */
-			if (length >= 4) {
-				/* TODO: Call metasyncer_handle_sync(data, length) */
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received metadata sync, %u bytes", length);
+			if (length >= 1) {
+				metasync_handle_message(conn->peerid, data, length);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid metadata sync size");
 			}
@@ -454,7 +513,7 @@ static void haconn_write(haconn_t *conn, double now) {
 static void haconn_parse(haconn_t *conn) {
 	in_packet_t *ipack;
 	
-	while (conn->mode == HACONN_CONNECTED && (ipack = conn->inputhead) != NULL) {
+	while ((conn->mode == HACONN_CONNECTED || conn->mode == HACONN_HANDSHAKE) && (ipack = conn->inputhead) != NULL) {
 		haconn_gotpacket(conn, ipack->type, ipack->data, ipack->length);
 		conn->inputhead = ipack->next;
 		free(ipack);
@@ -494,6 +553,30 @@ int haconn_init(void) {
 	listen_sock = sock;
 	
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: listening on port %u, node ID %u", listen_port, my_nodeid);
+	
+	/* Parse peers_config and establish connections */
+	if (peers_config && strlen(peers_config) > 0) {
+		char *peers_copy = strdup(peers_config);
+		char *peer = strtok(peers_copy, ",");
+		
+		while (peer) {
+			char *colon = strchr(peer, ':');
+			if (colon) {
+				*colon = '\0';
+				uint16_t port = atoi(colon + 1);
+				
+				/* Skip self */
+				if (port != listen_port) {
+					/* TODO: Implement actual connection establishment */
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: will connect to peer %s:%u", peer, port);
+				}
+			}
+			peer = strtok(NULL, ",");
+		}
+		
+		free(peers_copy);
+	}
+	
 	return 0;
 }
 
@@ -539,7 +622,7 @@ void haconn_desc(struct pollfd *pdesc, uint32_t *ndesc) {
 		}
 		
 		pdesc[pos].events = 0;
-		if (conn->mode == HACONN_CONNECTED && conn->input_end == 0) {
+		if ((conn->mode == HACONN_CONNECTED || conn->mode == HACONN_HANDSHAKE) && conn->input_end == 0) {
 			pdesc[pos].events |= POLLIN;
 		}
 		if (conn->outputhead != NULL) {
@@ -579,6 +662,7 @@ void haconn_serve(struct pollfd *pdesc) {
 					tcpclose(newfd);
 				} else {
 					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: accepted new connection");
+					/* TODO: Exchange node IDs during handshake */
 				}
 			}
 		}
@@ -590,7 +674,7 @@ void haconn_serve(struct pollfd *pdesc) {
 		next_conn = conn->next;
 		
 		if (conn->pdescpos >= 0) {
-			if ((pdesc[conn->pdescpos].revents & POLLIN) && conn->mode == HACONN_CONNECTED) {
+			if ((pdesc[conn->pdescpos].revents & POLLIN) && (conn->mode == HACONN_CONNECTED || conn->mode == HACONN_HANDSHAKE)) {
 				haconn_read(conn, now);
 			}
 			if (pdesc[conn->pdescpos].revents & (POLLERR | POLLHUP)) {
@@ -690,6 +774,37 @@ void haconn_send_raft_response(uint32_t peerid, const uint8_t *data, uint32_t le
 	for (conn = haconn_head; conn; conn = conn->next) {
 		if (conn->mode == HACONN_CONNECTED && conn->peerid == peerid) {
 			ptr = haconn_createpacket(conn, MFSHA_RAFT_RESPONSE, length);
+			if (ptr) {
+				memcpy(ptr, data, length);
+			}
+			break;
+		}
+	}
+}
+
+/* Send metadata sync message to all peers */
+void haconn_send_meta_sync(const uint8_t *data, uint32_t length) {
+	haconn_t *conn;
+	uint8_t *ptr;
+	
+	for (conn = haconn_head; conn; conn = conn->next) {
+		if (conn->mode == HACONN_CONNECTED) {
+			ptr = haconn_createpacket(conn, MFSHA_META_SYNC, length);
+			if (ptr) {
+				memcpy(ptr, data, length);
+			}
+		}
+	}
+}
+
+/* Send metadata sync message to specific peer */
+void haconn_send_meta_sync_to_peer(uint32_t peerid, const uint8_t *data, uint32_t length) {
+	haconn_t *conn;
+	uint8_t *ptr;
+	
+	for (conn = haconn_head; conn; conn = conn->next) {
+		if (conn->mode == HACONN_CONNECTED && conn->peerid == peerid) {
+			ptr = haconn_createpacket(conn, MFSHA_META_SYNC, length);
 			if (ptr) {
 				memcpy(ptr, data, length);
 			}

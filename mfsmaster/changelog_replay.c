@@ -23,6 +23,9 @@
 #include "crdtstore.h"
 #include "main.h"
 
+/* Declare restore_line function */
+int restore_line(const char *filename,uint64_t lv,const char *line,uint32_t *rts);
+
 static pthread_mutex_t replay_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t highest_replayed_version = 0;
 

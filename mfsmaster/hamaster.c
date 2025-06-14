@@ -13,6 +13,7 @@
 #include "gossip.h"
 #include "gvc.h"
 #include "changelog_replay.h"
+#include "metasync.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -95,6 +96,7 @@ int ha_initialize(void) {
         {gossip_init, "gossip protocol"},
         {gvc_init, "global version coordinator"},
         {changelog_replay_init, "changelog replay"},
+        {metasync_init, "metadata sync"},
         {haconn_init, "HA communication"},
         {NULL, NULL}
     };
@@ -120,6 +122,7 @@ void ha_terminate(void) {
     
     // Terminate HA modules in reverse order
     haconn_term();
+    metasync_term();
     gossip_term();
     raftconsensus_term();
     crdtstore_term();
@@ -140,4 +143,21 @@ uint32_t ha_get_node_id(void) {
 
 const char* ha_get_peers(void) {
     return ha_peers;
+}
+
+int ha_metadata_sync(void) {
+    if (!ha_enabled) {
+        return 0; /* No-op if HA mode is not enabled */
+    }
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA metadata sync: starting CRDT-based differences sync");
+    
+    /* Perform CRDT-based metadata sync */
+    if (metasync_startup_sync() < 0) {
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "HA metadata sync: failed to sync metadata differences");
+        return -1;
+    }
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA metadata sync: CRDT differences sync completed successfully");
+    return 0;
 }

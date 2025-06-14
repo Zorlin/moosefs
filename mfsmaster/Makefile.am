@@ -58,6 +58,7 @@ mfsmaster_SOURCES = \
 	raftconsensus.c raftconsensus.h \
 	gossip.c gossip.h \
 	gvc.c gvc.h \
+	metasync.c metasync.h \
 	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \
