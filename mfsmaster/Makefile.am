@@ -23,6 +23,7 @@ mfsmaster_SOURCES = \
 	exports.h exports.c \
 	bio.h bio.c \
 	changelog.c changelog.h \
+	changelog_replay.c changelog_replay.h \
 	chunkdelay.c chunkdelay.h \
 	chunks.c chunks.h \
 	filesystem.c filesystem.h \

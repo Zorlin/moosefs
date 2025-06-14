@@ -12,6 +12,7 @@
 #include "raftconsensus.h"
 #include "gossip.h"
 #include "gvc.h"
+#include "changelog_replay.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -93,6 +94,7 @@ int ha_initialize(void) {
         {raftconsensus_init, "Raft consensus"},
         {gossip_init, "gossip protocol"},
         {gvc_init, "global version coordinator"},
+        {changelog_replay_init, "changelog replay"},
         {haconn_init, "HA communication"},
         {NULL, NULL}
     };

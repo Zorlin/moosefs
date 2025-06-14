@@ -5,8 +5,14 @@
 #include "gossip.h"
 #include "mfslog.h"
 #include "cfg.h"
+#include "haconn.h"
+#include "datapack.h"
+#include "changelog.h"
 #include <stdio.h>
 #include <poll.h>
+#include <string.h>
+
+#define MAXLOGLINESIZE 200000U
 
 static double last_gossip_time = 0.0;
 static double gossip_interval = 5.0; /* Default gossip every 5 seconds */
@@ -81,12 +87,27 @@ void gossip_info(FILE *fd) {
 
 /* CRDT synchronization via gossip */
 void gossip_broadcast_changelog_entry(uint64_t version, const char *data, uint32_t data_len) {
-	/* TODO: Implement actual gossip broadcast of changelog entries */
-	/* For now, just log the entry to indicate CRDT sync is working */
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "gossip_broadcast: propagating changelog v%"PRIu64" (%u bytes): %.50s%s", 
-	        version, data_len, data, data_len > 50 ? "..." : "");
+	uint8_t packet[8 + 4 + MAXLOGLINESIZE];
+	uint8_t *ptr;
+	uint32_t psize;
 	
-	(void)version;
-	(void)data;
-	(void)data_len;
+	/* Build packet: HACONN_CHANGELOG_ENTRY
+	 * version:64 length:32 data:length
+	 */
+	if (data_len > MAXLOGLINESIZE) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "gossip_broadcast: changelog entry too large (%u bytes)", data_len);
+		return;
+	}
+	
+	ptr = packet;
+	put64bit(&ptr, version);
+	put32bit(&ptr, data_len);
+	memcpy(ptr, data, data_len);
+	psize = 8 + 4 + data_len;
+	
+	/* Send to all connected HA peers via haconn */
+	haconn_send_crdt_delta(packet, psize);
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "gossip_broadcast: sent changelog v%"PRIu64" (%u bytes) to HA peers", 
+	        version, data_len);
 }

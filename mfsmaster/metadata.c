@@ -1773,6 +1773,10 @@ uint64_t meta_version(void) {
 	return metaversion;
 }
 
+void meta_set_version(uint64_t newversion) {
+	metaversion = newversion;
+}
+
 void meta_setignoreflag(void) {
 	ignoreflag = 1;
 }

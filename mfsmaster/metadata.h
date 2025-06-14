@@ -26,6 +26,7 @@
 
 uint64_t meta_version_inc(void);
 uint64_t meta_version(void);
+void meta_set_version(uint64_t newversion);
 void meta_cleanup(void);
 void meta_setignoreflag(void);
 void meta_allowautorestore(void);

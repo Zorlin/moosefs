@@ -112,6 +112,7 @@ am__dirstamp = $(am__leading_dot)dirstamp
 am_mfsmaster_OBJECTS = mfsmaster-itree.$(OBJEXT) \
 	mfsmaster-topology.$(OBJEXT) mfsmaster-exports.$(OBJEXT) \
 	mfsmaster-bio.$(OBJEXT) mfsmaster-changelog.$(OBJEXT) \
+	mfsmaster-changelog_replay.$(OBJEXT) \
 	mfsmaster-chunkdelay.$(OBJEXT) mfsmaster-chunks.$(OBJEXT) \
 	mfsmaster-filesystem.$(OBJEXT) mfsmaster-appendres.$(OBJEXT) \
 	mfsmaster-xattr.$(OBJEXT) mfsmaster-posixacl.$(OBJEXT) \
@@ -255,6 +256,7 @@ am__depfiles_remade = ../mfscommon/$(DEPDIR)/mfsmaster-cfg.Po \
 	./$(DEPDIR)/mfsmaster-appendres.Po \
 	./$(DEPDIR)/mfsmaster-bgsaver.Po ./$(DEPDIR)/mfsmaster-bio.Po \
 	./$(DEPDIR)/mfsmaster-changelog.Po \
+	./$(DEPDIR)/mfsmaster-changelog_replay.Po \
 	./$(DEPDIR)/mfsmaster-chartsdata.Po \
 	./$(DEPDIR)/mfsmaster-chunkdelay.Po \
 	./$(DEPDIR)/mfsmaster-chunks.Po \
@@ -520,6 +522,7 @@ mfsmaster_SOURCES = \
 	exports.h exports.c \
 	bio.h bio.c \
 	changelog.c changelog.h \
+	changelog_replay.c changelog_replay.h \
 	chunkdelay.c chunkdelay.h \
 	chunks.c chunks.h \
 	filesystem.c filesystem.h \
@@ -863,6 +866,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-bgsaver.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-bio.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-changelog.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-changelog_replay.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-chartsdata.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-chunkdelay.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-chunks.Po@am__quote@ # am--include-marker
@@ -999,6 +1003,20 @@ mfsmaster-changelog.obj: changelog.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='changelog.c' object='mfsmaster-changelog.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-changelog.obj `if test -f 'changelog.c'; then $(CYGPATH_W) 'changelog.c'; else $(CYGPATH_W) '$(srcdir)/changelog.c'; fi`
+
+mfsmaster-changelog_replay.o: changelog_replay.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-changelog_replay.o -MD -MP -MF $(DEPDIR)/mfsmaster-changelog_replay.Tpo -c -o mfsmaster-changelog_replay.o `test -f 'changelog_replay.c' || echo '$(srcdir)/'`changelog_replay.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-changelog_replay.Tpo $(DEPDIR)/mfsmaster-changelog_replay.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='changelog_replay.c' object='mfsmaster-changelog_replay.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-changelog_replay.o `test -f 'changelog_replay.c' || echo '$(srcdir)/'`changelog_replay.c
+
+mfsmaster-changelog_replay.obj: changelog_replay.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-changelog_replay.obj -MD -MP -MF $(DEPDIR)/mfsmaster-changelog_replay.Tpo -c -o mfsmaster-changelog_replay.obj `if test -f 'changelog_replay.c'; then $(CYGPATH_W) 'changelog_replay.c'; else $(CYGPATH_W) '$(srcdir)/changelog_replay.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-changelog_replay.Tpo $(DEPDIR)/mfsmaster-changelog_replay.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='changelog_replay.c' object='mfsmaster-changelog_replay.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-changelog_replay.obj `if test -f 'changelog_replay.c'; then $(CYGPATH_W) 'changelog_replay.c'; else $(CYGPATH_W) '$(srcdir)/changelog_replay.c'; fi`
 
 mfsmaster-chunkdelay.o: chunkdelay.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-chunkdelay.o -MD -MP -MF $(DEPDIR)/mfsmaster-chunkdelay.Tpo -c -o mfsmaster-chunkdelay.o `test -f 'chunkdelay.c' || echo '$(srcdir)/'`chunkdelay.c
@@ -2064,6 +2082,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-bgsaver.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-bio.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-changelog.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-changelog_replay.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chartsdata.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chunkdelay.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chunks.Po
@@ -2178,6 +2197,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-bgsaver.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-bio.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-changelog.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-changelog_replay.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chartsdata.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chunkdelay.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chunks.Po

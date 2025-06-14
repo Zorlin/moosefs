@@ -403,6 +403,18 @@ int crdtstore_merge(crdt_store_t *store, const crdt_entry_t *remote_entry) {
 			break;
 	}
 	
+	/* Special handling for changelog entries */
+	if (remote_entry->key < UINT64_C(0x100000000) && remote_entry->value != NULL && remote_entry->value_size > 0) {
+		/* Keys below 4GB are assumed to be changelog versions */
+		/* This is a changelog entry, replay it if we haven't seen it yet */
+		extern int changelog_replay_entry(uint64_t version, const char *entry);
+		extern uint64_t meta_version(void);
+		
+		if (remote_entry->key > meta_version()) {
+			changelog_replay_entry(remote_entry->key, (const char *)remote_entry->value);
+		}
+	}
+	
 	return 0;
 }
 
