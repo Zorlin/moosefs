@@ -56,6 +56,8 @@
 #include "chunks.h"
 #include "filesystem.h"
 #include "metadata.h"
+#include "hamaster.h"
+#include "crdtstore.h"
 #include "datapack.h"
 #include "sockets.h"
 #include "random.h"
@@ -1541,6 +1543,16 @@ int meta_loadall(void) {
 			if (bestfname) {
 				free((char*)bestfname);
 			}
+			
+			/* Attempt CRDT cluster sync if HA mode is enabled */
+			if (ha_mode_enabled()) {
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"attempting cluster sync as fallback...");
+				if (crdt_cluster_sync_attempt() == 0) {
+					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"cluster sync successful - metadata loaded from peer");
+					return 0;
+				}
+			}
+			
 			return -1;
 		}
 		if (verboselevel>0) {

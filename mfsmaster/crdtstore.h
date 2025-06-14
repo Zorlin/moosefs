@@ -162,4 +162,7 @@ void crdtstore_get_stats(crdt_store_t *store, uint32_t *entries, uint32_t *memor
 lamport_time_t crdtstore_get_time(crdt_store_t *store);
 void crdtstore_update_clock(crdt_store_t *store, const lamport_time_t *remote_time);
 
+/* Cluster sync for bootstrapping */
+int crdt_cluster_sync_attempt(void);
+
 #endif

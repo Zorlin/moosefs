@@ -26,6 +26,9 @@
 #include <time.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
 
 #include "crdtstore.h"
 #include "cfg.h"
@@ -33,6 +36,7 @@
 #include "massert.h"
 #include "clocks.h"
 #include "datapack.h"
+#include "metadata.h"
 
 static crdt_store_t *main_store = NULL;
 static pthread_mutex_t store_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -642,4 +646,134 @@ void crdtstore_info(FILE *fd) {
 	/* TODO: Display CRDT conflict resolution stats */
 	
 	pthread_mutex_unlock(&store_mutex);
+}
+
+/* Forward declaration */
+static int try_sync_from_peer(const char *host, int port);
+
+/* Attempt to sync from existing cluster members when bootstrapping */
+int crdt_cluster_sync_attempt(void) {
+	char *ha_peers_env;
+	char *ha_node_id_env;
+	char *peers_copy, *peer, *saveptr;
+	int attempts_made = 0;
+	int successful_peers = 0;
+	
+	mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "attempting to sync from existing cluster members...");
+	
+	/* Check if HA mode is configured */
+	ha_node_id_env = getenv("MFSHA_NODE_ID");
+	ha_peers_env = getenv("MFSHA_PEERS");
+	
+	if (ha_node_id_env == NULL || ha_peers_env == NULL) {
+		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_NOTICE, "HA mode not configured (MFSHA_NODE_ID or MFSHA_PEERS not set) - starting with empty metadata");
+		return -1;
+	}
+	
+	mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "HA mode detected - node_id: %s, peers: %s", ha_node_id_env, ha_peers_env);
+	
+	/* Parse peers and attempt connections */
+	peers_copy = strdup(ha_peers_env);
+	if (peers_copy == NULL) {
+		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_ERR, "memory allocation failed during cluster sync");
+		return -1;
+	}
+	
+	peer = strtok_r(peers_copy, ",", &saveptr);
+	while (peer != NULL) {
+		char *colon_pos;
+		char *host;
+		int port = 9421; /* Default MooseFS master port */
+		
+		attempts_made++;
+		
+		/* Parse host:port */
+		colon_pos = strchr(peer, ':');
+		if (colon_pos != NULL) {
+			*colon_pos = '\0';
+			port = atoi(colon_pos + 1);
+		}
+		host = peer;
+		
+		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "attempting to sync from peer: %s:%d", host, port);
+		
+		/* Try to connect and download metadata */
+		if (try_sync_from_peer(host, port) == 0) {
+			successful_peers++;
+			mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "successfully synced from peer: %s:%d", host, port);
+			break; /* One successful sync is enough */
+		} else {
+			mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_WARNING, "failed to sync from peer: %s:%d", host, port);
+		}
+		
+		peer = strtok_r(NULL, ",", &saveptr);
+	}
+	
+	free(peers_copy);
+	
+	if (successful_peers > 0) {
+		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "cluster sync completed successfully (%d/%d peers)", successful_peers, attempts_made);
+		return 0;
+	} else {
+		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_WARNING, "cluster sync failed - no peers available (%d attempts)", attempts_made);
+		return -1;
+	}
+}
+
+/* Helper function to attempt sync from a specific peer */
+static int try_sync_from_peer(const char *host, int port) {
+	int sock;
+	struct sockaddr_in addr;
+	struct hostent *he;
+	int timeout = 10; /* 10 second timeout */
+	int result = -1;
+	
+	/* Create socket */
+	sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (sock < 0) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "socket creation failed: %s", strerror(errno));
+		return -1;
+	}
+	
+	/* Set timeout */
+	struct timeval tv;
+	tv.tv_sec = timeout;
+	tv.tv_usec = 0;
+	setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+	setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+	
+	/* Resolve hostname */
+	he = gethostbyname(host);
+	if (he == NULL) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "hostname resolution failed for %s", host);
+		close(sock);
+		return -1;
+	}
+	
+	/* Connect to peer */
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(port);
+	memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+	
+	if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "connection to %s:%d failed: %s", host, port, strerror(errno));
+		close(sock);
+		return -1;
+	}
+	
+	mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "connected to peer %s:%d, requesting metadata download", host, port);
+	
+	/* Use metadata download functionality */
+	result = meta_downloadall(sock);
+	
+	close(sock);
+	
+	if (result > 0) {
+		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_INFO, "metadata downloaded successfully from %s:%d", host, port);
+		return 0;
+	} else {
+		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_WARNING, "metadata download failed from %s:%d", host, port);
+		return -1;
+	}
 }
