@@ -2490,5 +2490,24 @@
 #define CLTOMA_FUSE_WFLAGS (PROTO_BASE+711)
 // wflags:8
 
+// HA Cluster Management
+#define CLTOMA_HA_CLUSTER_INFO (PROTO_BASE+712)
+// reserved:32
+// Answer:
+#define MATOCL_HA_CLUSTER_INFO (PROTO_BASE+713)
+// nodecount:32 shardcount:32 N*[ nodeid:32 hostnamelen:32 hostname:hostnamelen port:16 status:8 ] N*[ shardid:32 ]
+
+#define CLTOMA_HA_NODE_STATUS (PROTO_BASE+714)
+// reserved:32
+// Answer:
+#define MATOCL_HA_NODE_STATUS (PROTO_BASE+715)
+// nodeid:32 status:8 shardcount:32 N*[ shardid:32 ]
+
+#define CLTOMA_HA_SHARD_REDIRECT (PROTO_BASE+716)
+// inode:32 cmd:32 datalen:32 data:datalen
+// Answer:
+#define MATOCL_HA_SHARD_REDIRECT (PROTO_BASE+717)
+// status:8 [ redirecthost:32 redirectport:16 ]
+
 
 #endif

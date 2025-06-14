@@ -74,6 +74,8 @@
 #include "iptosesid.h"
 #include "mfsalloc.h"
 #include "multilan.h"
+#include "hamaster.h"
+#include "shardmgr.h"
 
 #define MaxPacketSize CLTOMA_MAXPACKETSIZE
 
@@ -6437,6 +6439,105 @@ void matoclserv_beforedisconnect(matoclserventry *eptr) {
 	flock_disconnected(eptr);
 }
 
+/* HA Protocol Handlers */
+void matoclserv_ha_cluster_info(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	uint32_t msgid;
+	uint8_t *ptr;
+	uint32_t response_size;
+	uint32_t node_count = 1; // For now, just report this node
+	uint32_t shard_count;
+	uint32_t i;
+	
+	if (!ha_mode_enabled()) {
+		// Not in HA mode, send error
+		if (length >= 4) {
+			msgid = get32bit(&data);
+		} else {
+			msgid = 0;
+		}
+		ptr = matoclserv_create_packet(eptr, MATOCL_HA_CLUSTER_INFO, 5);
+		put32bit(&ptr, msgid);
+		put8bit(&ptr, ENOTSUP); // Not supported
+		return;
+	}
+	
+	if (length < 4) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "CLTOMA_HA_CLUSTER_INFO - wrong size (%"PRIu32"/4)", length);
+		eptr->mode = KILL;
+		return;
+	}
+	
+	msgid = get32bit(&data);
+	shard_count = shardmgr_get_shard_count();
+	
+	// Calculate response size: nodecount + shardcount + nodeinfo + shardmappings
+	response_size = 4 + 4 + 4; // msgid + nodecount + shardcount
+	response_size += 4 + 4 + 9 + 2 + 1; // nodeid + hostnamelen + "localhost" + port + status
+	response_size += shard_count * 4; // shard mappings
+	
+	ptr = matoclserv_create_packet(eptr, MATOCL_HA_CLUSTER_INFO, response_size);
+	put32bit(&ptr, msgid);
+	put32bit(&ptr, node_count);
+	put32bit(&ptr, shard_count);
+	
+	// Node information
+	put32bit(&ptr, ha_get_node_id()); // node_id
+	put32bit(&ptr, 9); // hostname length
+	memcpy(ptr, "localhost", 9);
+	ptr += 9;
+	put16bit(&ptr, 9421); // port
+	put8bit(&ptr, 1); // status: up
+	
+	// Shard mappings (all shards map to this node for now)
+	for (i = 0; i < shard_count; i++) {
+		put32bit(&ptr, 0); // All shards owned by this node
+	}
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "HA cluster info sent to client");
+}
+
+void matoclserv_ha_node_status(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	uint32_t msgid;
+	uint8_t *ptr;
+	uint32_t shard_count;
+	uint32_t i;
+	
+	if (!ha_mode_enabled()) {
+		// Not in HA mode, send error
+		if (length >= 4) {
+			msgid = get32bit(&data);
+		} else {
+			msgid = 0;
+		}
+		ptr = matoclserv_create_packet(eptr, MATOCL_HA_NODE_STATUS, 5);
+		put32bit(&ptr, msgid);
+		put8bit(&ptr, ENOTSUP); // Not supported
+		return;
+	}
+	
+	if (length < 4) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "CLTOMA_HA_NODE_STATUS - wrong size (%"PRIu32"/4)", length);
+		eptr->mode = KILL;
+		return;
+	}
+	
+	msgid = get32bit(&data);
+	shard_count = shardmgr_get_shard_count();
+	
+	ptr = matoclserv_create_packet(eptr, MATOCL_HA_NODE_STATUS, 4 + 4 + 1 + 4 + shard_count * 4);
+	put32bit(&ptr, msgid);
+	put32bit(&ptr, ha_get_node_id()); // nodeid
+	put8bit(&ptr, 1); // status: up
+	put32bit(&ptr, shard_count); // shardcount
+	
+	// List all shards owned by this node
+	for (i = 0; i < shard_count; i++) {
+		put32bit(&ptr, i); // shard ID
+	}
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "HA node status sent to client");
+}
+
 void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *data,uint32_t length) {
 	if (type==ANTOAN_NOP) {
 		return;
@@ -6537,6 +6638,12 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 				break;
 			case CLTOMA_INSTANCE_NAME:
 				matoclserv_instance_name(eptr,data,length);
+				break;
+			case CLTOMA_HA_CLUSTER_INFO:
+				matoclserv_ha_cluster_info(eptr,data,length);
+				break;
+			case CLTOMA_HA_NODE_STATUS:
+				matoclserv_ha_node_status(eptr,data,length);
 				break;
 			default:
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"main master server module: got unknown message from unregistered (type:%"PRIu32")",type);
@@ -6841,6 +6948,12 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 				break;
 			case CLTOMA_INSTANCE_NAME:
 				matoclserv_instance_name(eptr,data,length);
+				break;
+			case CLTOMA_HA_CLUSTER_INFO:
+				matoclserv_ha_cluster_info(eptr,data,length);
+				break;
+			case CLTOMA_HA_NODE_STATUS:
+				matoclserv_ha_node_status(eptr,data,length);
 				break;
 			default:
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"main master server module: got unknown message from mfsmount (type:%"PRIu32")",type);

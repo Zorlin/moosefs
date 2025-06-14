@@ -730,6 +730,7 @@ AC_CONFIG_FILES([Makefile
 		mfsdata/Makefile
 		mfsmaster/Makefile
 		mfsmetatools/Makefile
+		mfsha/Makefile
 		mfsmetalogger/Makefile
 		mfsclient/Makefile
 		mfsnetdump/Makefile

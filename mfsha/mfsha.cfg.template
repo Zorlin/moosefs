@@ -1,0 +1,127 @@
+# MooseFS High Availability Configuration Template
+# Copy to /usr/local/etc/mfsha.cfg and customize for your environment
+
+#
+# Node Identity Configuration
+#
+# Unique identifier for this node (required, must be unique across cluster)
+MFSHA_NODE_ID = 1
+
+# Network port for HA communication (default: 9430)
+MFSHA_PORT = 9430
+
+# Interface to bind to (default: all interfaces)
+# BIND_HOST = *
+
+# Optional region identifier for multi-region deployments
+# MFSHA_REGION = us-east-1
+
+#
+# Cluster Configuration
+#
+# Comma-separated list of all cluster nodes (including this one)
+# Format: "host1:port1,host2:port2,host3:port3"
+MFSHA_PEERS = "node1.example.com:9430,node2.example.com:9430,node3.example.com:9430"
+
+# Number of metadata shards (default: 8, recommended: 8-64)
+# Higher values provide better parallelism but increase overhead
+HA_SHARD_COUNT = 8
+
+# Maximum memory for CRDT cache in bytes (default: 8GB)
+# Recommended: 25-50% of available RAM
+HA_CRDT_MAX_MEMORY = 8589934592
+
+#
+# Raft Consensus Configuration
+#
+# Election timeout in milliseconds (default: 5000)
+# Higher values reduce unnecessary elections, lower values improve failover time
+HA_RAFT_ELECTION_TIMEOUT = 5000
+
+# Heartbeat timeout in milliseconds (default: 1000)  
+# Should be much smaller than election timeout (typically 1/5)
+HA_RAFT_HEARTBEAT_TIMEOUT = 1000
+
+# Raft priority for leader election (default: 50)
+# Higher values make this node more likely to become leader
+# HA_RAFT_PRIORITY = 50
+
+#
+# Synchronization Configuration
+#
+# Metadata sync interval to disk in seconds (default: 30.0)
+# More frequent syncing improves durability but increases I/O
+HA_METADATA_SYNC_INTERVAL = 30.0
+
+# Gossip protocol interval in seconds (default: 5.0)  
+# More frequent gossip improves failure detection but increases network traffic
+HA_GOSSIP_INTERVAL = 5.0
+
+# Enable asynchronous delta replication (default: true)
+# Improves performance but may slightly increase replication lag
+# HA_ASYNC_REPLICATION = true
+
+#
+# Storage Configuration
+#
+# Path for metadata storage (default: /usr/local/var/mfs)
+DATA_PATH = /usr/local/var/mfs
+
+# Path for log files (default: /var/log)
+# LOG_PATH = /var/log
+
+#
+# Security Configuration (Optional)
+#
+# Enable TLS encryption for inter-node communication
+# MFSHA_TLS_ENABLE = false
+# MFSHA_TLS_CERT_PATH = /etc/mfs/certs/node.crt
+# MFSHA_TLS_KEY_PATH = /etc/mfs/certs/node.key  
+# MFSHA_TLS_CA_PATH = /etc/mfs/certs/ca.crt
+
+# Cluster authentication token
+# MFSHA_AUTH_TOKEN = your-cluster-secret-token
+
+#
+# Advanced Configuration
+#
+# Cache cleanup interval in seconds (default: 300)
+# HA_CACHE_CLEANUP_INTERVAL = 300
+
+# Maximum log entries before compaction (default: 10000)
+# HA_RAFT_LOG_COMPACTION_THRESHOLD = 10000
+
+# Network timeout for peer connections in seconds (default: 30)
+# HA_NETWORK_TIMEOUT = 30
+
+# Enable debug logging (default: false)
+# HA_DEBUG_LOGGING = false
+
+#
+# Monitoring Configuration
+#
+# Enable Prometheus metrics (default: false)
+# HA_PROMETHEUS_ENABLE = false
+# HA_PROMETHEUS_PORT = 9100
+
+# Enable health check endpoint (default: true)
+# HA_HEALTH_CHECK_ENABLE = true  
+# HA_HEALTH_CHECK_PORT = 9431
+
+#
+# Network Configuration  
+#
+# Additional network interfaces (if needed)
+# ADDITIONAL_INTERFACES = eth1,eth2
+
+#
+# Performance Tuning
+#
+# I/O thread pool size (default: 4)
+# HA_IO_THREADS = 4
+
+# Network buffer size in bytes (default: 65536)
+# HA_NETWORK_BUFFER_SIZE = 65536
+
+# Memory pool chunk size in bytes (default: 1048576)
+# HA_MEMORY_POOL_CHUNK_SIZE = 1048576

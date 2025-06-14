@@ -6112,8 +6112,8 @@ esac
 
 
 
-macro_version='2.5.4.1-baa1-dirty'
-macro_revision='2.5.4.1'
+macro_version='2.5.4'
+macro_revision='2.5.4'
 
 
 
@@ -19922,7 +19922,7 @@ printf "%s\n" "#define LIGHT_MFS $LIGHT_MFS" >>confdefs.h
 
 
 
-ac_config_files="$ac_config_files Makefile mfsmanpages/Makefile mfschunkserver/Makefile mfsscripts/Makefile mfsdata/Makefile mfsmaster/Makefile mfsmetatools/Makefile mfsmetalogger/Makefile mfsclient/Makefile mfsnetdump/Makefile mfstests/Makefile systemd/Makefile mfsscripts/mfscli.py mfsscripts/chart.cgi mfsscripts/chartdata.cgi mfsscripts/index.html mfsscripts/mfscgiserv.py mfsdata/mfschunkserver.cfg mfsdata/mfsmaster.cfg mfsdata/mfsmetalogger.cfg mfsdata/mfsmount.cfg systemd/moosefs-cgiserv.service systemd/moosefs-chunkserver.service systemd/moosefs-chunkserver@.service systemd/moosefs-master.service systemd/moosefs-master@.service systemd/moosefs-metalogger.service systemd/moosefs-metalogger@.service"
+ac_config_files="$ac_config_files Makefile mfsmanpages/Makefile mfschunkserver/Makefile mfsscripts/Makefile mfsdata/Makefile mfsmaster/Makefile mfsmetatools/Makefile mfsha/Makefile mfsmetalogger/Makefile mfsclient/Makefile mfsnetdump/Makefile mfstests/Makefile systemd/Makefile mfsscripts/mfscli.py mfsscripts/chart.cgi mfsscripts/chartdata.cgi mfsscripts/index.html mfsscripts/mfscgiserv.py mfsdata/mfschunkserver.cfg mfsdata/mfsmaster.cfg mfsdata/mfsmetalogger.cfg mfsdata/mfsmount.cfg systemd/moosefs-cgiserv.service systemd/moosefs-chunkserver.service systemd/moosefs-chunkserver@.service systemd/moosefs-master.service systemd/moosefs-master@.service systemd/moosefs-metalogger.service systemd/moosefs-metalogger@.service"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -21029,6 +21029,7 @@ do
     "mfsdata/Makefile") CONFIG_FILES="$CONFIG_FILES mfsdata/Makefile" ;;
     "mfsmaster/Makefile") CONFIG_FILES="$CONFIG_FILES mfsmaster/Makefile" ;;
     "mfsmetatools/Makefile") CONFIG_FILES="$CONFIG_FILES mfsmetatools/Makefile" ;;
+    "mfsha/Makefile") CONFIG_FILES="$CONFIG_FILES mfsha/Makefile" ;;
     "mfsmetalogger/Makefile") CONFIG_FILES="$CONFIG_FILES mfsmetalogger/Makefile" ;;
     "mfsclient/Makefile") CONFIG_FILES="$CONFIG_FILES mfsclient/Makefile" ;;
     "mfsnetdump/Makefile") CONFIG_FILES="$CONFIG_FILES mfsnetdump/Makefile" ;;

@@ -1,0 +1,400 @@
+#!/bin/bash
+
+# MooseFS HA Administration Script
+# Provides common administrative operations for mfsha clusters
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+MFSHA_BIN="${MFSHA_BIN:-/usr/local/sbin/mfsha}"
+MFSHA_CONFIG="${MFSHA_CONFIG:-/usr/local/etc/mfsha.cfg}"
+MFSHA_LOG="${MFSHA_LOG:-/var/log/mfsha.log}"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Print colored output
+log() {
+    local level="$1"
+    shift
+    case "$level" in
+        error)   echo -e "${RED}[ERROR]${NC} $*" >&2 ;;
+        warn)    echo -e "${YELLOW}[WARN]${NC} $*" ;;
+        info)    echo -e "${GREEN}[INFO]${NC} $*" ;;
+        debug)   echo -e "${BLUE}[DEBUG]${NC} $*" ;;
+        *)       echo "$*" ;;
+    esac
+}
+
+# Check if mfsha is running
+is_running() {
+    pgrep -f "$MFSHA_BIN" >/dev/null 2>&1
+}
+
+# Get cluster status from logs
+get_cluster_status() {
+    if [[ ! -f "$MFSHA_LOG" ]]; then
+        log error "Log file not found: $MFSHA_LOG"
+        return 1
+    fi
+    
+    # Extract recent status information
+    tail -n 100 "$MFSHA_LOG" | grep -E "(initialized|connected|elected|failed)" | tail -10
+}
+
+# Show help
+show_help() {
+    cat << EOF
+MooseFS HA Administration Script
+
+USAGE:
+    $SCRIPT_NAME <command> [options]
+
+COMMANDS:
+    status              Show cluster status
+    start               Start mfsha daemon
+    stop                Stop mfsha daemon  
+    restart             Restart mfsha daemon
+    logs                Show recent log entries
+    config              Show current configuration
+    health              Health check
+    nodes               List cluster nodes
+    shards              Show shard distribution
+    help                Show this help message
+
+EXAMPLES:
+    $SCRIPT_NAME status                 # Show cluster status
+    $SCRIPT_NAME start                  # Start the daemon
+    $SCRIPT_NAME logs --follow          # Follow logs in real-time
+    $SCRIPT_NAME health --verbose       # Detailed health check
+
+ENVIRONMENT VARIABLES:
+    MFSHA_BIN           Path to mfsha binary (default: /usr/local/sbin/mfsha)
+    MFSHA_CONFIG        Path to config file (default: /usr/local/etc/mfsha.cfg)
+    MFSHA_LOG           Path to log file (default: /var/log/mfsha.log)
+
+EOF
+}
+
+# Show cluster status
+cmd_status() {
+    log info "Checking MooseFS HA cluster status..."
+    
+    if is_running; then
+        log info "mfsha daemon is running (PID: $(pgrep -f "$MFSHA_BIN"))"
+    else
+        log warn "mfsha daemon is not running"
+    fi
+    
+    if [[ -f "$MFSHA_CONFIG" ]]; then
+        local node_id peers shard_count
+        node_id=$(grep "^MFSHA_NODE_ID" "$MFSHA_CONFIG" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+        peers=$(grep "^MFSHA_PEERS" "$MFSHA_CONFIG" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        shard_count=$(grep "^HA_SHARD_COUNT" "$MFSHA_CONFIG" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+        
+        echo
+        echo "Configuration:"
+        echo "  Node ID: ${node_id:-unknown}"
+        echo "  Shards: ${shard_count:-8}"
+        echo "  Peers: ${peers:-not configured}"
+    else
+        log warn "Configuration file not found: $MFSHA_CONFIG"
+    fi
+    
+    echo
+    echo "Recent Activity:"
+    get_cluster_status
+}
+
+# Start daemon
+cmd_start() {
+    if is_running; then
+        log warn "mfsha daemon is already running"
+        return 0
+    fi
+    
+    log info "Starting mfsha daemon..."
+    
+    if [[ ! -f "$MFSHA_CONFIG" ]]; then
+        log error "Configuration file not found: $MFSHA_CONFIG"
+        log info "Create configuration from template: cp $MFSHA_CONFIG.template $MFSHA_CONFIG"
+        return 1
+    fi
+    
+    # Start daemon in background
+    nohup "$MFSHA_BIN" > /dev/null 2>&1 &
+    local pid=$!
+    
+    # Wait a moment to see if it started successfully
+    sleep 2
+    
+    if kill -0 "$pid" 2>/dev/null; then
+        log info "mfsha daemon started successfully (PID: $pid)"
+    else
+        log error "Failed to start mfsha daemon"
+        return 1
+    fi
+}
+
+# Stop daemon
+cmd_stop() {
+    if ! is_running; then
+        log warn "mfsha daemon is not running"
+        return 0
+    fi
+    
+    log info "Stopping mfsha daemon..."
+    
+    local pid
+    pid=$(pgrep -f "$MFSHA_BIN")
+    
+    # Send SIGTERM for graceful shutdown
+    kill -TERM "$pid"
+    
+    # Wait for graceful shutdown
+    local count=0
+    while kill -0 "$pid" 2>/dev/null && [[ $count -lt 30 ]]; do
+        sleep 1
+        ((count++))
+    done
+    
+    if kill -0 "$pid" 2>/dev/null; then
+        log warn "Graceful shutdown timeout, forcing termination..."
+        kill -KILL "$pid"
+        sleep 1
+    fi
+    
+    if ! is_running; then
+        log info "mfsha daemon stopped successfully"
+    else
+        log error "Failed to stop mfsha daemon"
+        return 1
+    fi
+}
+
+# Restart daemon
+cmd_restart() {
+    cmd_stop
+    sleep 2
+    cmd_start
+}
+
+# Show logs
+cmd_logs() {
+    local follow=false
+    local lines=50
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --follow|-f)
+                follow=true
+                shift
+                ;;
+            --lines|-n)
+                lines="$2"
+                shift 2
+                ;;
+            *)
+                log error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+    
+    if [[ ! -f "$MFSHA_LOG" ]]; then
+        log error "Log file not found: $MFSHA_LOG"
+        return 1
+    fi
+    
+    if [[ "$follow" == true ]]; then
+        log info "Following log file (Ctrl+C to stop): $MFSHA_LOG"
+        tail -f "$MFSHA_LOG"
+    else
+        log info "Showing last $lines lines from: $MFSHA_LOG"
+        tail -n "$lines" "$MFSHA_LOG"
+    fi
+}
+
+# Show configuration
+cmd_config() {
+    if [[ ! -f "$MFSHA_CONFIG" ]]; then
+        log error "Configuration file not found: $MFSHA_CONFIG"
+        return 1
+    fi
+    
+    log info "Current configuration: $MFSHA_CONFIG"
+    echo
+    
+    # Show non-comment, non-empty lines
+    grep -v '^#' "$MFSHA_CONFIG" | grep -v '^$' | while IFS= read -r line; do
+        echo "  $line"
+    done
+}
+
+# Health check
+cmd_health() {
+    local verbose=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --verbose|-v)
+                verbose=true
+                shift
+                ;;
+            *)
+                log error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+    
+    log info "Performing health check..."
+    
+    local errors=0
+    
+    # Check if daemon is running
+    if is_running; then
+        log info "✓ Daemon is running"
+    else
+        log error "✗ Daemon is not running"
+        ((errors++))
+    fi
+    
+    # Check configuration file
+    if [[ -f "$MFSHA_CONFIG" ]]; then
+        log info "✓ Configuration file exists"
+        
+        # Check required settings
+        local required_settings=("MFSHA_NODE_ID" "MFSHA_PEERS")
+        for setting in "${required_settings[@]}"; do
+            if grep -q "^$setting" "$MFSHA_CONFIG"; then
+                log info "✓ $setting is configured"
+            else
+                log error "✗ $setting is not configured"
+                ((errors++))
+            fi
+        done
+    else
+        log error "✗ Configuration file not found"
+        ((errors++))
+    fi
+    
+    # Check log file
+    if [[ -f "$MFSHA_LOG" ]]; then
+        log info "✓ Log file exists"
+        
+        # Check for recent errors
+        if tail -n 50 "$MFSHA_LOG" | grep -q "ERROR\|CRITICAL"; then
+            log warn "⚠ Recent errors found in log file"
+            if [[ "$verbose" == true ]]; then
+                echo "Recent errors:"
+                tail -n 50 "$MFSHA_LOG" | grep "ERROR\|CRITICAL" | tail -5
+            fi
+        else
+            log info "✓ No recent errors in logs"
+        fi
+    else
+        log warn "⚠ Log file not found (daemon may not have started yet)"
+    fi
+    
+    # Check network connectivity
+    if [[ -f "$MFSHA_CONFIG" ]]; then
+        local port
+        port=$(grep "^MFSHA_PORT" "$MFSHA_CONFIG" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+        port=${port:-9430}
+        
+        if netstat -ln 2>/dev/null | grep -q ":$port "; then
+            log info "✓ Network port $port is listening"
+        else
+            log error "✗ Network port $port is not listening"
+            ((errors++))
+        fi
+    fi
+    
+    echo
+    if [[ $errors -eq 0 ]]; then
+        log info "Health check passed (0 errors)"
+        return 0
+    else
+        log error "Health check failed ($errors errors)"
+        return 1
+    fi
+}
+
+# List cluster nodes (placeholder)
+cmd_nodes() {
+    log info "Listing cluster nodes..."
+    
+    if [[ ! -f "$MFSHA_CONFIG" ]]; then
+        log error "Configuration file not found: $MFSHA_CONFIG"
+        return 1
+    fi
+    
+    local peers
+    peers=$(grep "^MFSHA_PEERS" "$MFSHA_CONFIG" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+    
+    if [[ -n "$peers" ]]; then
+        echo "Configured peers:"
+        echo "$peers" | tr ',' '\n' | nl -w2 -s': '
+    else
+        log warn "No peers configured"
+    fi
+    
+    echo
+    log info "Note: Use 'mfsha-admin logs' to see actual connectivity status"
+}
+
+# Show shard distribution (placeholder)
+cmd_shards() {
+    log info "Showing shard distribution..."
+    
+    if [[ ! -f "$MFSHA_CONFIG" ]]; then
+        log error "Configuration file not found: $MFSHA_CONFIG"
+        return 1
+    fi
+    
+    local shard_count
+    shard_count=$(grep "^HA_SHARD_COUNT" "$MFSHA_CONFIG" 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+    shard_count=${shard_count:-8}
+    
+    echo "Configured shard count: $shard_count"
+    echo
+    log info "Note: Use 'mfsha-admin logs' to see actual shard assignments"
+}
+
+# Main command dispatcher
+main() {
+    if [[ $# -eq 0 ]]; then
+        show_help
+        return 1
+    fi
+    
+    local command="$1"
+    shift
+    
+    case "$command" in
+        status)     cmd_status "$@" ;;
+        start)      cmd_start "$@" ;;
+        stop)       cmd_stop "$@" ;;
+        restart)    cmd_restart "$@" ;;
+        logs)       cmd_logs "$@" ;;
+        config)     cmd_config "$@" ;;
+        health)     cmd_health "$@" ;;
+        nodes)      cmd_nodes "$@" ;;
+        shards)     cmd_shards "$@" ;;
+        help)       show_help ;;
+        *)
+            log error "Unknown command: $command"
+            echo
+            show_help
+            return 1
+            ;;
+    esac
+}
+
+# Run main function
+main "$@"

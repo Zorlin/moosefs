@@ -129,6 +129,9 @@ am_mfsmaster_OBJECTS = mfsmaster-itree.$(OBJEXT) \
 	mfsmaster-datacachemgr.$(OBJEXT) \
 	mfsmaster-chartsdata.$(OBJEXT) mfsmaster-bgsaver.$(OBJEXT) \
 	mfsmaster-csipmap.$(OBJEXT) mfsmaster-multilan.$(OBJEXT) \
+	mfsmaster-hamaster.$(OBJEXT) mfsmaster-shardmgr.$(OBJEXT) \
+	mfsmaster-haconn.$(OBJEXT) mfsmaster-crdtstore.$(OBJEXT) \
+	mfsmaster-raftconsensus.$(OBJEXT) mfsmaster-gossip.$(OBJEXT) \
 	../mfscommon/mfsmaster-main.$(OBJEXT) \
 	../mfscommon/mfsmaster-processname.$(OBJEXT) \
 	../mfscommon/mfsmaster-cfg.$(OBJEXT) \
@@ -255,12 +258,16 @@ am__depfiles_remade = ../mfscommon/$(DEPDIR)/mfsmaster-cfg.Po \
 	./$(DEPDIR)/mfsmaster-changelog.Po \
 	./$(DEPDIR)/mfsmaster-chartsdata.Po \
 	./$(DEPDIR)/mfsmaster-chunkdelay.Po \
-	./$(DEPDIR)/mfsmaster-chunks.Po ./$(DEPDIR)/mfsmaster-csdb.Po \
-	./$(DEPDIR)/mfsmaster-csipmap.Po \
+	./$(DEPDIR)/mfsmaster-chunks.Po \
+	./$(DEPDIR)/mfsmaster-crdtstore.Po \
+	./$(DEPDIR)/mfsmaster-csdb.Po ./$(DEPDIR)/mfsmaster-csipmap.Po \
 	./$(DEPDIR)/mfsmaster-datacachemgr.Po \
 	./$(DEPDIR)/mfsmaster-exports.Po \
 	./$(DEPDIR)/mfsmaster-filesystem.Po \
 	./$(DEPDIR)/mfsmaster-flocklocks.Po \
+	./$(DEPDIR)/mfsmaster-gossip.Po \
+	./$(DEPDIR)/mfsmaster-haconn.Po \
+	./$(DEPDIR)/mfsmaster-hamaster.Po \
 	./$(DEPDIR)/mfsmaster-iptosesid.Po \
 	./$(DEPDIR)/mfsmaster-itree.Po \
 	./$(DEPDIR)/mfsmaster-matoclserv.Po \
@@ -274,8 +281,10 @@ am__depfiles_remade = ../mfscommon/$(DEPDIR)/mfsmaster-cfg.Po \
 	./$(DEPDIR)/mfsmaster-patterns.Po \
 	./$(DEPDIR)/mfsmaster-posixacl.Po \
 	./$(DEPDIR)/mfsmaster-posixlocks.Po \
+	./$(DEPDIR)/mfsmaster-raftconsensus.Po \
 	./$(DEPDIR)/mfsmaster-restore.Po \
 	./$(DEPDIR)/mfsmaster-sessions.Po \
+	./$(DEPDIR)/mfsmaster-shardmgr.Po \
 	./$(DEPDIR)/mfsmaster-sharedpointer.Po \
 	./$(DEPDIR)/mfsmaster-storageclass.Po \
 	./$(DEPDIR)/mfsmaster-topology.Po \
@@ -540,6 +549,12 @@ mfsmaster_SOURCES = \
 	bgsaver.c bgsaver.h \
 	csipmap.c csipmap.h \
 	multilan.c multilan.h \
+	hamaster.c hamaster.h \
+	shardmgr.c shardmgr.h \
+	haconn.c haconn.h \
+	crdtstore.c crdtstore.h \
+	raftconsensus.c raftconsensus.h \
+	gossip.c gossip.h \
 	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \
@@ -847,12 +862,16 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-chartsdata.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-chunkdelay.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-chunks.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-crdtstore.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-csdb.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-csipmap.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-datacachemgr.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-exports.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-filesystem.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-flocklocks.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-gossip.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-haconn.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-hamaster.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-iptosesid.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-itree.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-matoclserv.Po@am__quote@ # am--include-marker
@@ -866,8 +885,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-patterns.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-posixacl.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-posixlocks.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-raftconsensus.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-restore.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-sessions.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-shardmgr.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-sharedpointer.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-storageclass.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mfsmaster-topology.Po@am__quote@ # am--include-marker
@@ -1351,6 +1372,90 @@ mfsmaster-multilan.obj: multilan.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='multilan.c' object='mfsmaster-multilan.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-multilan.obj `if test -f 'multilan.c'; then $(CYGPATH_W) 'multilan.c'; else $(CYGPATH_W) '$(srcdir)/multilan.c'; fi`
+
+mfsmaster-hamaster.o: hamaster.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-hamaster.o -MD -MP -MF $(DEPDIR)/mfsmaster-hamaster.Tpo -c -o mfsmaster-hamaster.o `test -f 'hamaster.c' || echo '$(srcdir)/'`hamaster.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-hamaster.Tpo $(DEPDIR)/mfsmaster-hamaster.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='hamaster.c' object='mfsmaster-hamaster.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-hamaster.o `test -f 'hamaster.c' || echo '$(srcdir)/'`hamaster.c
+
+mfsmaster-hamaster.obj: hamaster.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-hamaster.obj -MD -MP -MF $(DEPDIR)/mfsmaster-hamaster.Tpo -c -o mfsmaster-hamaster.obj `if test -f 'hamaster.c'; then $(CYGPATH_W) 'hamaster.c'; else $(CYGPATH_W) '$(srcdir)/hamaster.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-hamaster.Tpo $(DEPDIR)/mfsmaster-hamaster.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='hamaster.c' object='mfsmaster-hamaster.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-hamaster.obj `if test -f 'hamaster.c'; then $(CYGPATH_W) 'hamaster.c'; else $(CYGPATH_W) '$(srcdir)/hamaster.c'; fi`
+
+mfsmaster-shardmgr.o: shardmgr.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-shardmgr.o -MD -MP -MF $(DEPDIR)/mfsmaster-shardmgr.Tpo -c -o mfsmaster-shardmgr.o `test -f 'shardmgr.c' || echo '$(srcdir)/'`shardmgr.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-shardmgr.Tpo $(DEPDIR)/mfsmaster-shardmgr.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='shardmgr.c' object='mfsmaster-shardmgr.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-shardmgr.o `test -f 'shardmgr.c' || echo '$(srcdir)/'`shardmgr.c
+
+mfsmaster-shardmgr.obj: shardmgr.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-shardmgr.obj -MD -MP -MF $(DEPDIR)/mfsmaster-shardmgr.Tpo -c -o mfsmaster-shardmgr.obj `if test -f 'shardmgr.c'; then $(CYGPATH_W) 'shardmgr.c'; else $(CYGPATH_W) '$(srcdir)/shardmgr.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-shardmgr.Tpo $(DEPDIR)/mfsmaster-shardmgr.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='shardmgr.c' object='mfsmaster-shardmgr.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-shardmgr.obj `if test -f 'shardmgr.c'; then $(CYGPATH_W) 'shardmgr.c'; else $(CYGPATH_W) '$(srcdir)/shardmgr.c'; fi`
+
+mfsmaster-haconn.o: haconn.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-haconn.o -MD -MP -MF $(DEPDIR)/mfsmaster-haconn.Tpo -c -o mfsmaster-haconn.o `test -f 'haconn.c' || echo '$(srcdir)/'`haconn.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-haconn.Tpo $(DEPDIR)/mfsmaster-haconn.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='haconn.c' object='mfsmaster-haconn.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-haconn.o `test -f 'haconn.c' || echo '$(srcdir)/'`haconn.c
+
+mfsmaster-haconn.obj: haconn.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-haconn.obj -MD -MP -MF $(DEPDIR)/mfsmaster-haconn.Tpo -c -o mfsmaster-haconn.obj `if test -f 'haconn.c'; then $(CYGPATH_W) 'haconn.c'; else $(CYGPATH_W) '$(srcdir)/haconn.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-haconn.Tpo $(DEPDIR)/mfsmaster-haconn.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='haconn.c' object='mfsmaster-haconn.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-haconn.obj `if test -f 'haconn.c'; then $(CYGPATH_W) 'haconn.c'; else $(CYGPATH_W) '$(srcdir)/haconn.c'; fi`
+
+mfsmaster-crdtstore.o: crdtstore.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-crdtstore.o -MD -MP -MF $(DEPDIR)/mfsmaster-crdtstore.Tpo -c -o mfsmaster-crdtstore.o `test -f 'crdtstore.c' || echo '$(srcdir)/'`crdtstore.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-crdtstore.Tpo $(DEPDIR)/mfsmaster-crdtstore.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='crdtstore.c' object='mfsmaster-crdtstore.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-crdtstore.o `test -f 'crdtstore.c' || echo '$(srcdir)/'`crdtstore.c
+
+mfsmaster-crdtstore.obj: crdtstore.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-crdtstore.obj -MD -MP -MF $(DEPDIR)/mfsmaster-crdtstore.Tpo -c -o mfsmaster-crdtstore.obj `if test -f 'crdtstore.c'; then $(CYGPATH_W) 'crdtstore.c'; else $(CYGPATH_W) '$(srcdir)/crdtstore.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-crdtstore.Tpo $(DEPDIR)/mfsmaster-crdtstore.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='crdtstore.c' object='mfsmaster-crdtstore.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-crdtstore.obj `if test -f 'crdtstore.c'; then $(CYGPATH_W) 'crdtstore.c'; else $(CYGPATH_W) '$(srcdir)/crdtstore.c'; fi`
+
+mfsmaster-raftconsensus.o: raftconsensus.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-raftconsensus.o -MD -MP -MF $(DEPDIR)/mfsmaster-raftconsensus.Tpo -c -o mfsmaster-raftconsensus.o `test -f 'raftconsensus.c' || echo '$(srcdir)/'`raftconsensus.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-raftconsensus.Tpo $(DEPDIR)/mfsmaster-raftconsensus.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='raftconsensus.c' object='mfsmaster-raftconsensus.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-raftconsensus.o `test -f 'raftconsensus.c' || echo '$(srcdir)/'`raftconsensus.c
+
+mfsmaster-raftconsensus.obj: raftconsensus.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-raftconsensus.obj -MD -MP -MF $(DEPDIR)/mfsmaster-raftconsensus.Tpo -c -o mfsmaster-raftconsensus.obj `if test -f 'raftconsensus.c'; then $(CYGPATH_W) 'raftconsensus.c'; else $(CYGPATH_W) '$(srcdir)/raftconsensus.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-raftconsensus.Tpo $(DEPDIR)/mfsmaster-raftconsensus.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='raftconsensus.c' object='mfsmaster-raftconsensus.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-raftconsensus.obj `if test -f 'raftconsensus.c'; then $(CYGPATH_W) 'raftconsensus.c'; else $(CYGPATH_W) '$(srcdir)/raftconsensus.c'; fi`
+
+mfsmaster-gossip.o: gossip.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-gossip.o -MD -MP -MF $(DEPDIR)/mfsmaster-gossip.Tpo -c -o mfsmaster-gossip.o `test -f 'gossip.c' || echo '$(srcdir)/'`gossip.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-gossip.Tpo $(DEPDIR)/mfsmaster-gossip.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='gossip.c' object='mfsmaster-gossip.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-gossip.o `test -f 'gossip.c' || echo '$(srcdir)/'`gossip.c
+
+mfsmaster-gossip.obj: gossip.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-gossip.obj -MD -MP -MF $(DEPDIR)/mfsmaster-gossip.Tpo -c -o mfsmaster-gossip.obj `if test -f 'gossip.c'; then $(CYGPATH_W) 'gossip.c'; else $(CYGPATH_W) '$(srcdir)/gossip.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-gossip.Tpo $(DEPDIR)/mfsmaster-gossip.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='gossip.c' object='mfsmaster-gossip.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-gossip.obj `if test -f 'gossip.c'; then $(CYGPATH_W) 'gossip.c'; else $(CYGPATH_W) '$(srcdir)/gossip.c'; fi`
 
 ../mfscommon/mfsmaster-main.o: ../mfscommon/main.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT ../mfscommon/mfsmaster-main.o -MD -MP -MF ../mfscommon/$(DEPDIR)/mfsmaster-main.Tpo -c -o ../mfscommon/mfsmaster-main.o `test -f '../mfscommon/main.c' || echo '$(srcdir)/'`../mfscommon/main.c
@@ -1943,12 +2048,16 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-chartsdata.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chunkdelay.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chunks.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-crdtstore.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-csdb.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-csipmap.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-datacachemgr.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-exports.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-filesystem.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-flocklocks.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-gossip.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-haconn.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-hamaster.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-iptosesid.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-itree.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-matoclserv.Po
@@ -1962,8 +2071,10 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-patterns.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-posixacl.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-posixlocks.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-raftconsensus.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-restore.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-sessions.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-shardmgr.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-sharedpointer.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-storageclass.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-topology.Po
@@ -2050,12 +2161,16 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-chartsdata.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chunkdelay.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-chunks.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-crdtstore.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-csdb.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-csipmap.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-datacachemgr.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-exports.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-filesystem.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-flocklocks.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-gossip.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-haconn.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-hamaster.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-iptosesid.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-itree.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-matoclserv.Po
@@ -2069,8 +2184,10 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-patterns.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-posixacl.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-posixlocks.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-raftconsensus.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-restore.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-sessions.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-shardmgr.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-sharedpointer.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-storageclass.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-topology.Po

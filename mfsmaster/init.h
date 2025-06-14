@@ -38,6 +38,7 @@
 #include "globengine.h"
 #include "bgsaver.h"
 #include "multilan.h"
+#include "hamaster.h"
 
 #define MODULE_OPTIONS_GETOPT "iax"
 #define MODULE_OPTIONS_SWITCH \
@@ -52,6 +53,10 @@
 		break;
 #define MODULE_OPTIONS_SYNOPIS "[-i] [-a] [-x [-x]] "
 #define MODULE_OPTIONS_DESC "-i : ignore some metadata structure errors (attach orphans to root, ignore names without inode, etc.). DO NOT USE unless you are absoluttely sure that there are no other options to restore your metadata.\n-a : automatically restore metadata from change logs\n-x : produce more verbose output\n-xx : even more verbose output\n"
+
+/* HA Mode Detection */
+extern int ha_mode_enabled(void);
+extern int ha_initialize(void);
 
 /* Run Tab */
 typedef int (*runfn)(void);
@@ -73,6 +78,7 @@ struct {
 	{matomlserv_init,"communication with metalogger"},
 	{matocsserv_init,"communication with chunkserver"},
 	{matoclserv_init,"communication with clients"},
+	{ha_initialize,"HA cluster support"},
 	{(runfn)0,"****"}
 },LateRunTab[]={
 	{(runfn)0,"****"}

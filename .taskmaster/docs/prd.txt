@@ -1,0 +1,212 @@
+# MooseFS High Availability and Metadata Sharding Enhancement
+
+## Project Overview
+
+This project aims to implement a complete, self-contained design for adding true high-availability (HA) and optional metadata sharding to MooseFS Community Edition (MFS-CE). The enhancement focuses exclusively on the metadata tier while keeping the existing chunkserver layer untouched.
+
+## Goals and Success Criteria
+
+### Primary Goals
+- **G1**: Achieve zero-RPO (Recovery Point Objective) and sub-second RTO (Recovery Time Objective) for metadata loss to be competitive with enterprise filesystems
+- **G2**: Enable horizontal scaling of metadata IOPS through sharding to eliminate the current "single master" bottleneck
+- **G3**: Survive WAN partitions and datacenter loss while maintaining availability for both reads and writes, targeting multi-region deployments
+- **G4**: Maintain small operational footprint (< 5 binaries) with obvious codepaths for community maintainability
+
+### Non-Goals
+- **NG1**: No changes to chunk placement or erasure-coding logic (out-of-scope)
+- **NG2**: No POSIX-breaking semantics - applications cannot observe divergence
+
+## High-Level Technical Architecture
+
+### Core Components
+1. **Metadata Server (MDS)** - Enhanced metadata servers with Raft consensus
+2. **Shard Management** - Distributed metadata sharding with consistent hashing
+3. **CRDT State Management** - Conflict-free replicated data types for eventual consistency
+4. **Circular Replication Ring** - Efficient delta propagation between nodes
+5. **Gossip Protocol** - Lightweight membership and topology management
+
+### Key Technical Innovations
+- **Raft Leader Lock Pattern**: Fast, strongly consistent leadership per-shard
+- **CRDT-based Metadata**: Allows multi-writer behavior across partitions
+- **Circular Delta Streaming**: Logarithmic spread with k-successor widening
+- **Optimistic Writes**: Sub-millisecond write acknowledgment with eventual consistency
+
+## Detailed Feature Requirements
+
+### 1. Raft Consensus Implementation
+- Embed existing Raft library (etcd-raft or Hashicorp Raft)
+- Implement leader election with sub-second failover
+- Support 3-5 node replica groups per shard
+- Handle network partitions gracefully
+
+### 2. CRDT Data Model
+- **Inode Attributes**: Last-Writer-Wins registers with Lamport timestamps
+- **Link Counts**: Grow-Only counters with element-wise addition
+- **Directory Entries**: Observed-Remove Sets for file operations
+- **Extended Attributes**: LWW registers for metadata
+- **Quota Usage**: PN-Counters for space accounting
+
+### 3. Sharding Strategy
+- Use Blake3 hash function for consistent shard assignment
+- Support dynamic shard rebalancing
+- Implement shard table in embedded database (BadgerDB or LMDB)
+- Handle cross-shard operations (rename) with two-phase commit
+
+### 4. Circular Replication
+- Implement topology-aware successor selection
+- Delta propagation with O(N·k) message complexity
+- Duplicate detection using entry UUID hashes
+- Configurable fan-out width (default: ⌈log₂(N)⌉)
+
+### 5. Client Integration
+- **Fast Reads**: Direct CRDT store access from any node
+- **Optimistic Writes**: Local apply with background Raft synchronization
+- **Strict Consistency**: Optional linearizable reads via leader contact
+- Backward compatibility with existing MooseFS clients
+
+### 6. Failure Handling
+- Single node crash recovery with zero data loss
+- Network partition tolerance with continued operation
+- Datacenter loss survival with multi-region placement
+- Automatic conflict resolution via CRDT semantics
+
+### 7. Operational Tools
+- Bootstrap commands for initial cluster setup
+- Runtime shard migration and rebalancing
+- Monitoring and observability dashboards
+- Leader transfer and maintenance operations
+
+## Performance Requirements
+
+### Latency Targets
+- Local writes (same DC): 1-3ms (50th percentile), 10ms (99th percentile)
+- Remote writes (cross-DC): 8-25ms (50th percentile), 60ms (99th percentile)
+- Reads (any node): 0.3ms (50th percentile), 2ms (99th percentile)
+
+### Scalability Targets
+- Support 1000+ metadata operations per second per shard
+- Handle 100+ concurrent shards
+- Scale to petabyte-scale filesystems
+- Support multi-region deployments
+
+## Security Requirements
+
+### Authentication and Authorization
+- Reuse existing MooseFS TLS mutual authentication
+- Implement per-shard Raft group secrets with rotation
+- AES-GCM encryption for ring delta messages
+- Support for existing MooseFS access control mechanisms
+
+## Implementation Phases
+
+### Phase 0: Foundation
+- Refactor existing mfsmetalogger into reusable library components
+- Establish development environment and testing framework
+- Create comprehensive design documentation
+
+### Phase 1: Basic HA
+- Embed Raft consensus library
+- Implement single-shard HA without CRDTs
+- Achieve linearizable consistency for basic operations
+- Basic leader election and failover
+
+### Phase 2: CRDT Integration
+- Implement CRDT abstraction layer
+- Add circular ring replication
+- Enable optimistic local writes
+- Conflict resolution mechanisms
+
+### Phase 3: Sharding
+- Implement shard table and routing
+- Bootstrap and cluster management logic
+- Dynamic rebalancing capabilities
+- Cross-shard operation handling
+
+### Phase 4: Production Readiness
+- Comprehensive documentation and operator playbooks
+- CI/CD pipeline with chaos testing (Jepsen-like)
+- Performance optimization and tuning
+- Migration tools from existing MooseFS
+
+## Testing and Quality Assurance
+
+### Testing Strategy
+- Unit tests for all CRDT operations
+- Integration tests for Raft consensus
+- Chaos engineering tests for partition tolerance
+- Performance benchmarking and regression testing
+- Compatibility testing with existing MooseFS deployments
+
+### Quality Gates
+- 100% test coverage for critical paths
+- Zero data loss under any single failure scenario
+- Performance meets or exceeds specified latency targets
+- Successful deployment in test environments
+
+## Success Metrics
+
+### Technical Success
+- Zero-downtime metadata operations during single node failures
+- Sub-second recovery times for planned and unplanned failures
+- Linear scaling of metadata throughput with additional shards
+- Full compatibility with existing MooseFS chunk servers and clients
+
+### Operational Success
+- Simplified deployment and maintenance procedures
+- Clear operational runbooks and troubleshooting guides
+- Monitoring and alerting integration
+- Community adoption and contribution
+
+## Risks and Mitigation
+
+### Technical Risks
+- **Complexity of distributed consensus**: Mitigated by using proven Raft libraries
+- **CRDT conflict resolution edge cases**: Extensive testing and formal verification
+- **Performance regression**: Continuous benchmarking and optimization
+
+### Operational Risks
+- **Migration complexity**: Comprehensive migration tools and documentation
+- **Operational overhead**: Simplified deployment and monitoring tools
+- **Community adoption**: Extensive documentation and training materials
+
+## Dependencies
+
+### Internal Dependencies
+- Existing MooseFS codebase and architecture
+- Current mfsmetalogger functionality
+- MooseFS communication protocols
+
+### External Dependencies
+- Raft consensus library (etcd-raft or Hashicorp Raft)
+- Embedded database (BadgerDB or LMDB)
+- Cryptographic libraries for security
+- Testing frameworks for chaos engineering
+
+## Timeline and Milestones
+
+### Phase 0 (Months 1-2): Foundation
+- Complete architectural documentation
+- Refactor existing codebase
+- Set up development environment
+
+### Phase 1 (Months 3-5): Basic HA
+- Implement Raft integration
+- Basic leader election and failover
+- Single-shard linearizable operations
+
+### Phase 2 (Months 6-8): CRDT Integration
+- CRDT abstraction implementation
+- Circular replication ring
+- Optimistic write capabilities
+
+### Phase 3 (Months 9-11): Sharding
+- Shard table implementation
+- Dynamic rebalancing
+- Cross-shard operations
+
+### Phase 4 (Months 12-14): Production
+- Documentation and tooling
+- Performance optimization
+- Migration and deployment tools
+
+This comprehensive enhancement will position MooseFS as a leading open-source distributed filesystem with enterprise-grade high availability and horizontal scaling capabilities.

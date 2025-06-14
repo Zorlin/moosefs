@@ -1,5 +1,5 @@
 if BUILD_MASTER
-MASTERDIR = mfsmaster mfsmetatools
+MASTERDIR = mfsmaster mfsmetatools mfsha
 else
 MASTERDIR =
 endif

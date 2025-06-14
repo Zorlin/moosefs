@@ -50,6 +50,12 @@ mfsmaster_SOURCES = \
 	bgsaver.c bgsaver.h \
 	csipmap.c csipmap.h \
 	multilan.c multilan.h \
+	hamaster.c hamaster.h \
+	shardmgr.c shardmgr.h \
+	haconn.c haconn.h \
+	crdtstore.c crdtstore.h \
+	raftconsensus.c raftconsensus.h \
+	gossip.c gossip.h \
 	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \

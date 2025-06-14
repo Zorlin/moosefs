@@ -1,0 +1,45 @@
+[Unit]
+Description=MooseFS High Availability Metadata Server
+Documentation=man:mfsha(8)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=mfs
+Group=mfs
+ExecStart=/usr/local/sbin/mfsha
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+
+# Allow access to data and config directories
+ReadWritePaths=/usr/local/var/mfs
+ReadOnlyPaths=/usr/local/etc
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=1024
+
+# Environment
+Environment=MFSHA_CONFIG=/usr/local/etc/mfsha.cfg
+Environment=MFSHA_LOG=/var/log/mfsha.log
+
+[Install]
+WantedBy=multi-user.target

@@ -180,6 +180,32 @@ static double lastwrite;
 static int sessionlost;
 static uint64_t lastsyncsend = 0;
 
+/* Forward declarations for HA functions */
+threc* fs_get_my_threc(void);
+const uint8_t* fs_sendandreceive(threc *rec,uint32_t expected_cmd,uint32_t *answer_leng);
+static const uint8_t* fs_raw_sendandreceive(const uint8_t *buff, uint32_t size, uint32_t expected_cmd, uint32_t *length);
+
+/* HA Cluster Management */
+typedef struct _ha_node {
+    char *hostname;
+    uint16_t port;
+    uint32_t node_id;
+    int fd;
+    uint8_t status; // 0=down, 1=up, 2=connecting
+    double last_check;
+} ha_node_t;
+
+typedef struct _ha_cluster {
+    ha_node_t *nodes;
+    uint32_t node_count;
+    uint32_t shard_count;
+    uint32_t *shard_to_node; // shard_id -> node_index mapping
+    uint8_t ha_mode; // 0=single master, 1=HA cluster
+    uint32_t current_node; // Currently connected node index
+} ha_cluster_t;
+
+static ha_cluster_t ha_cluster = {NULL, 0, 8, NULL, 0, 0};
+
 static uint64_t usectimeout;
 static uint32_t maxretries;
 
@@ -270,6 +296,159 @@ uint32_t fs_getsrcip(void) {
 	sip = srcip;
 	pthread_mutex_unlock(&fdlock);
 	return sip;
+}
+
+/* HA Cluster Functions */
+static uint32_t ha_get_shard_for_inode(uint32_t inode) {
+	return inode % ha_cluster.shard_count;
+}
+
+static int ha_discover_cluster(void) {
+	uint8_t *wptr, *buff;
+	const uint8_t *rptr;
+	uint32_t cmd, length, i;
+	
+	if (!ha_cluster.ha_mode) {
+		return 0; // Not in HA mode
+	}
+	
+	// Send cluster discovery request
+	buff = malloc(12);
+	wptr = buff;
+	put32bit(&wptr, CLTOMA_HA_CLUSTER_INFO);
+	put32bit(&wptr, 4);
+	put32bit(&wptr, 0); // Reserved
+	
+	rptr = fs_raw_sendandreceive(buff, 12, MATOCL_HA_CLUSTER_INFO, &length);
+	free(buff);
+	
+	if (rptr == NULL) {
+		return -1;
+	}
+	
+	if (length < 16) {
+		return -1;
+	}
+	
+	cmd = get32bit(&rptr);
+	length = get32bit(&rptr);
+	
+	if (cmd != MATOCL_HA_CLUSTER_INFO) {
+		return -1;
+	}
+	
+	// Parse cluster topology
+	ha_cluster.node_count = get32bit(&rptr);
+	ha_cluster.shard_count = get32bit(&rptr);
+	
+	// Allocate space for nodes and shard mapping
+	if (ha_cluster.nodes) {
+		for (i = 0; i < ha_cluster.node_count; i++) {
+			if (ha_cluster.nodes[i].hostname) {
+				free(ha_cluster.nodes[i].hostname);
+			}
+		}
+		free(ha_cluster.nodes);
+	}
+	if (ha_cluster.shard_to_node) {
+		free(ha_cluster.shard_to_node);
+	}
+	
+	ha_cluster.nodes = malloc(ha_cluster.node_count * sizeof(ha_node_t));
+	ha_cluster.shard_to_node = malloc(ha_cluster.shard_count * sizeof(uint32_t));
+	
+	// Parse node information
+	for (i = 0; i < ha_cluster.node_count; i++) {
+		uint32_t hostname_len;
+		ha_cluster.nodes[i].node_id = get32bit(&rptr);
+		hostname_len = get32bit(&rptr);
+		
+		ha_cluster.nodes[i].hostname = malloc(hostname_len + 1);
+		memcpy(ha_cluster.nodes[i].hostname, rptr, hostname_len);
+		ha_cluster.nodes[i].hostname[hostname_len] = 0;
+		rptr += hostname_len;
+		
+		ha_cluster.nodes[i].port = get16bit(&rptr);
+		ha_cluster.nodes[i].status = get8bit(&rptr);
+		ha_cluster.nodes[i].fd = -1;
+		ha_cluster.nodes[i].last_check = 0.0;
+	}
+	
+	// Parse shard mappings
+	for (i = 0; i < ha_cluster.shard_count; i++) {
+		ha_cluster.shard_to_node[i] = get32bit(&rptr);
+	}
+	
+	return 0;
+}
+
+// Raw send/receive that bypasses thread management (for HA routing)
+static const uint8_t* fs_raw_sendandreceive(const uint8_t *buff, uint32_t size, uint32_t expected_cmd, uint32_t *length) {
+	// For now, this is a simplified implementation that uses the current connection
+	// In a full HA implementation, this would handle routing to specific nodes
+	threc *rec = fs_get_my_threc();
+	if (rec == NULL) {
+		return NULL;
+	}
+	
+	// Copy the data to the thread record output buffer
+	if (rec->obuffsize < size) {
+		if (rec->obuff != NULL) {
+			free(rec->obuff);
+		}
+		rec->obuff = malloc(size);
+		rec->obuffsize = size;
+	}
+	
+	if (rec->obuff == NULL) {
+		return NULL;
+	}
+	
+	memcpy(rec->obuff, buff, size);
+	rec->odataleng = size;
+	
+	// Use existing sendandreceive mechanism
+	return fs_sendandreceive(rec, expected_cmd, length);
+}
+
+static int ha_route_to_shard_owner(uint32_t inode, uint32_t cmd, const uint8_t *data, uint32_t size, const uint8_t **rptr, uint32_t *length) {
+	uint32_t shard_id, target_node;
+	
+	(void)data; // Suppress unused parameter warning  
+	(void)size; // Suppress unused parameter warning
+	
+	if (!ha_cluster.ha_mode) {
+		// Fall back to regular single master communication  
+		threc *rec = fs_get_my_threc();
+		*rptr = fs_sendandreceive(rec, cmd + 1, length); // Response cmd = request cmd + 1
+		return (*rptr != NULL) ? 0 : -1;
+	}
+	
+	shard_id = ha_get_shard_for_inode(inode);
+	
+	if (shard_id >= ha_cluster.shard_count) {
+		return -1;
+	}
+	
+	target_node = ha_cluster.shard_to_node[shard_id];
+	
+	if (target_node >= ha_cluster.node_count) {
+		return -1;
+	}
+	
+	// Check if this is the local node (current connection)
+	if (target_node == ha_cluster.current_node) {
+		// Route through current connection
+		threc *rec = fs_get_my_threc();
+		*rptr = fs_sendandreceive(rec, cmd + 1, length);
+		return (*rptr != NULL) ? 0 : -1;
+	}
+	
+	// For now, always route through current connection
+	// TODO: Implement direct connection to target node
+	threc *rec = fs_get_my_threc();
+	*rptr = fs_sendandreceive(rec, cmd + 1, length);
+	return (*rptr != NULL) ? 0 : -1;
 }
 
 static inline void copy_attr(const uint8_t *rptr,uint8_t attr[ATTR_RECORD_SIZE],uint8_t asize) {
@@ -1691,6 +1870,16 @@ int fs_connect(uint8_t oninit,struct connect_args_t *cargs) {
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"mfsmaster accepted connection with parameters: %s",infobuff);
 	}
 	free(infobuff);
+	
+	// Try HA cluster discovery after successful connection
+	if (ha_discover_cluster() < 0) {
+		// HA discovery failed, but continue with single master mode
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"HA cluster discovery failed, continuing in single master mode");
+	} else if (ha_cluster.ha_mode) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Connected to HA cluster with %"PRIu32" nodes, %"PRIu32" shards", 
+			ha_cluster.node_count, ha_cluster.shard_count);
+	}
+	
 	return 0;
 }
 

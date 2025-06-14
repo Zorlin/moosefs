@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__taskmaster-ai__get_tasks",
+      "mcp__taskmaster-ai__set_task_status",
+      "mcp__taskmaster-ai__update_task",
+      "mcp__deepwiki__ask_question",
+      "Bash(mkdir:*)",
+      "Bash(grep:*)",
+      "Bash(make:*)",
+      "Bash(find:*)",
+      "mcp__taskmaster-ai__update",
+      "mcp__taskmaster-ai__next_task",
+      "Bash(gcc:*)",
+      "Bash(rg:*)",
+      "mcp__deepwiki__read_wiki_structure",
+      "Bash(cp:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "playwright",
+    "taskmaster-ai",
+    "deepwiki"
+  ]
+}

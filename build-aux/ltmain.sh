@@ -2,7 +2,7 @@
 ## DO NOT EDIT - This file generated from ./build-aux/ltmain.in
 ##               by inline-source v2019-02-19.15
 
-# libtool (GNU libtool) 2.5.4.1-baa1-dirty
+# libtool (GNU libtool) 2.5.4
 # Provide generalized library-building support services.
 # Written by Gordon Matzigkeit <gord@gnu.ai.mit.edu>, 1996
 
@@ -31,8 +31,8 @@
 
 PROGRAM=libtool
 PACKAGE=libtool
-VERSION=2.5.4.1-baa1-dirty
-package_revision=2.5.4.1
+VERSION=2.5.4
+package_revision=2.5.4
 
 
 ## ------ ##
@@ -2215,7 +2215,7 @@ func_version ()
 # End:
 
 # Set a version string.
-scriptversion='(GNU libtool) 2.5.4.1-baa1-dirty'
+scriptversion='(GNU libtool) 2.5.4'
 
 # func_version
 # ------------
@@ -2326,7 +2326,7 @@ include the following information:
        autoconf:       `($AUTOCONF --version) 2>/dev/null |$SED 1q`
 
 Report bugs to <bug-libtool@gnu.org>.
-GNU libtool home page: <https://www.gnu.org/s/libtool/>.
+GNU libtool home page: <https://www.gnu.org/software/libtool/>.
 General help using GNU software: <https://www.gnu.org/gethelp/>."
     exit 0
 }
