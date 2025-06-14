@@ -16,7 +16,8 @@
       "mcp__deepwiki__read_wiki_structure",
       "Bash(cp:*)",
       "Bash(./configure)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(awk:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

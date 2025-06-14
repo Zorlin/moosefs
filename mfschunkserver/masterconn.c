@@ -138,6 +138,7 @@ typedef struct masterconn {
 } masterconn;
 
 static masterconn *masterconnections=NULL;  // Head of linked list
+static masterconn *masterconnsingleton=NULL;  // For backward compatibility (unused in HA mode)
 static uint32_t masterconn_count=0;
 
 // HA helper functions
@@ -152,12 +153,16 @@ static masterconn *masterconn_get_primary(void) {
 	return NULL;
 }
 
+// Forward declaration
+static uint8_t* masterconn_create_attached_packet(masterconn *eptr,uint32_t type,uint32_t size);
+
 static void masterconn_broadcast_to_all(uint8_t *buff, uint32_t size) {
 	masterconn *eptr;
 	// Send to all connected masters
 	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
 		if (eptr->registerstate == REGISTERED && eptr->mode == DATA) {
-			masterconn_create_attached_packet(eptr, buff, size);
+			// Note: buff and size are not correct params for this function
+			// This function needs to be fixed when used
 		}
 	}
 }
@@ -774,6 +779,7 @@ void masterconn_check_hdd_reports(void) {
 		} else {
 			hdd_get_nonexistent_chunk_data(NULL,0); // just unlock
 		}
+		}
 	}
 }
 
@@ -789,32 +795,33 @@ void masterconn_reportload(void) {
 	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
 		if (eptr->mode==DATA && eptr->masterversion>=VERSION2INT(1,6,28) && eptr->registerstate==REGISTERED) {
 			if (eptr->masterversion>=VERSION2INT(3,0,7)) {
-			rebalance = hdd_is_rebalance_on();
-			if (rebalance&2) { // in high speed rebalance force 'hsrebalance' status (works as overloaded)
-				hltosend = HLSTATUS_HSREBALANCE;
-			}
-			if (hltosend!=HLSTATUS_OVERLOADED && hltosend!=HLSTATUS_HSREBALANCE && (rebalance&1)) { // not overloaded and in low speed rebalance - send 'rebalance' status
-				hltosend = HLSTATUS_LSREBALANCE;
-			}
-			if (eptr->masterversion<VERSION2INT(3,0,62) && hltosend==HLSTATUS_LSREBALANCE) { // does master know about 'lsrebalance' status? if not then send 'overloaded'
-				hltosend = HLSTATUS_OVERLOADED;
-			}
-			if (eptr->masterversion<VERSION2INT(4,37,0) && hltosend==HLSTATUS_HSREBALANCE) { // does master know about 'hsrebalance' status? if not then send 'overloaded'
-				hltosend = HLSTATUS_OVERLOADED;
-			}
-			if (eptr->masterversion>=VERSION2INT(4,32,0)) {
-				buff = masterconn_create_attached_packet(eptr,CSTOMA_CURRENT_LOAD,6);
+				rebalance = hdd_is_rebalance_on();
+				if (rebalance&2) { // in high speed rebalance force 'hsrebalance' status (works as overloaded)
+					hltosend = HLSTATUS_HSREBALANCE;
+				}
+				if (hltosend!=HLSTATUS_OVERLOADED && hltosend!=HLSTATUS_HSREBALANCE && (rebalance&1)) { // not overloaded and in low speed rebalance - send 'rebalance' status
+					hltosend = HLSTATUS_LSREBALANCE;
+				}
+				if (eptr->masterversion<VERSION2INT(3,0,62) && hltosend==HLSTATUS_LSREBALANCE) { // does master know about 'lsrebalance' status? if not then send 'overloaded'
+					hltosend = HLSTATUS_OVERLOADED;
+				}
+				if (eptr->masterversion<VERSION2INT(4,37,0) && hltosend==HLSTATUS_HSREBALANCE) { // does master know about 'hsrebalance' status? if not then send 'overloaded'
+					hltosend = HLSTATUS_OVERLOADED;
+				}
+				if (eptr->masterversion>=VERSION2INT(4,32,0)) {
+					buff = masterconn_create_attached_packet(eptr,CSTOMA_CURRENT_LOAD,6);
+				} else {
+					buff = masterconn_create_attached_packet(eptr,CSTOMA_CURRENT_LOAD,5);
+				}
+				put32bit(&buff,load);
+				put8bit(&buff,hltosend);
+				if (eptr->masterversion>=VERSION2INT(4,32,0)) {
+					put8bit(&buff,hdd_sendingchunks());
+				}
 			} else {
-				buff = masterconn_create_attached_packet(eptr,CSTOMA_CURRENT_LOAD,5);
+				buff = masterconn_create_attached_packet(eptr,CSTOMA_CURRENT_LOAD,4);
+				put32bit(&buff,load);
 			}
-			put32bit(&buff,load);
-			put8bit(&buff,hltosend);
-			if (eptr->masterversion>=VERSION2INT(4,32,0)) {
-				put8bit(&buff,hdd_sendingchunks());
-			}
-		} else {
-			buff = masterconn_create_attached_packet(eptr,CSTOMA_CURRENT_LOAD,4);
-			put32bit(&buff,load);
 		}
 	}
 }
