@@ -83,7 +83,7 @@ int raftconsensus_init(void) {
 	pthread_mutex_unlock(&raft_mutex);
 	
 	/* Register with main loop */
-	main_time_register(0, 100000, raftconsensus_tick_wrapper);
+	main_time_register(1, 0, raftconsensus_tick_wrapper);  /* Call every 1 second */
 	
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Raft consensus initialized: node_id=%u version=%"PRIu64,
 	        local_node_id, raft_state.current_version);
@@ -764,10 +764,12 @@ int raft_add_peer(uint32_t node_id, const char *host, uint16_t port) {
 	/* If we just reached quorum and haven't had an election yet, trigger one */
 	if (first_time_has_quorum && raft_state.state == RAFT_STATE_FOLLOWER && 
 	    raft_state.current_term == 0) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Reached quorum (%u total nodes = self + %u peers) - triggering first election",
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Reached quorum (%u total nodes = self + %u peers) - starting first election immediately",
 		        new_total, raft_state.peer_count);
-		/* Reset last heartbeat to trigger election in next tick */
-		raft_state.last_heartbeat = 0;
+		pthread_mutex_unlock(&raft_mutex);
+		/* Start election immediately */
+		raft_start_election();
+		return 0;
 	}
 	
 	pthread_mutex_unlock(&raft_mutex);
