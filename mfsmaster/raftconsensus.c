@@ -202,6 +202,45 @@ uint32_t raft_get_leader_ip(void) {
 	return leader_ip;
 }
 
+/* Get leader address (IP and port) */
+int raftconsensus_get_leader_address(uint32_t *ip, uint16_t *port) {
+	raft_peer_t *peer;
+	int found = 0;
+	
+	pthread_mutex_lock(&raft_mutex);
+	
+	if (raft_state.current_leader == 0) {
+		/* No leader */
+		pthread_mutex_unlock(&raft_mutex);
+		return -1;
+	}
+	
+	if (raft_state.current_leader == local_node_id) {
+		/* We are the leader - return our own address */
+		*ip = 0; /* Will be filled by caller with local IP */
+		*port = 0; /* Will be filled by caller with local port */
+		found = 1;
+	} else {
+		/* Find leader peer */
+		peer = raft_state.peers;
+		while (peer) {
+			if (peer->node_id == raft_state.current_leader) {
+				/* For now, we'll need to resolve the hostname */
+				/* The caller will need to handle hostname resolution */
+				*ip = 0; /* Indicates hostname needs resolution */
+				*port = peer->port;
+				found = 1;
+				break;
+			}
+			peer = peer->next;
+		}
+	}
+	
+	pthread_mutex_unlock(&raft_mutex);
+	
+	return found ? 0 : -1;
+}
+
 /* Check if we have a valid lease */
 int raft_has_valid_lease(void) {
 	int valid = 0;

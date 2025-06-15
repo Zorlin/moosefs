@@ -157,6 +157,7 @@ uint32_t raft_get_leader(void);
 uint32_t raft_get_leader_ip(void);
 int raft_has_valid_lease(void);
 int raft_transfer_leadership(uint32_t target_node);
+int raftconsensus_get_leader_address(uint32_t *ip, uint16_t *port);
 
 /* Log operations */
 int raft_append_entry(uint32_t type, const void *data, uint32_t data_size, uint64_t version);

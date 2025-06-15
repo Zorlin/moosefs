@@ -2762,6 +2762,15 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 				eptr->mode = KILL;
 				return;
 			}
+			
+			/* In HA mode, only the leader with a valid lease should process chunk registrations
+			 * This prevents concurrent chunk registration from multiple masters */
+			if (ha_mode_enabled() && !raft_has_valid_lease()) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"not processing chunk registration - no valid lease (leader=%u)",raft_get_leader());
+				/* Don't kill the connection - the chunkserver will continue with other masters */
+				return;
+			}
+			
 			eptr->newchunkdelay = NEWCHUNKDELAY;
 			eptr->receivingchunks |= TRANSFERING_NEW_CHUNKS;
 			receivingchunks |= TRANSFERING_NEW_CHUNKS;
@@ -2788,6 +2797,13 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 				eptr->mode = KILL;
 				return;
 			}
+			
+			/* In HA mode, only process END if we have a valid lease */
+			if (ha_mode_enabled() && !raft_has_valid_lease()) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"not processing chunk registration end - no valid lease");
+				return;
+			}
+			
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s register end",eptr->servdesc);
 			eptr->registered = REGISTERED;
 			chunk_server_register_end(eptr->csid);
