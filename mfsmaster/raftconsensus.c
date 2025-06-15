@@ -276,6 +276,22 @@ int raft_append_entry(uint32_t type, const void *data, uint32_t data_size, uint6
 void raft_start_election(void) {
 	pthread_mutex_lock(&raft_mutex);
 	
+	/* Check if we've recently participated in an election for this term */
+	if (raft_state.voted_for != 0 && raft_state.voted_for != local_node_id) {
+		uint64_t now_ms = monotonic_useconds() / 1000;
+		uint64_t time_since_vote = now_ms - raft_state.last_heartbeat;
+		
+		/* If we voted for someone else recently, don't start election immediately */
+		if (time_since_vote < (raft_state.election_timeout / 2)) {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Delaying election - recently voted for node %u (term %"PRIu64")",
+			        raft_state.voted_for, raft_state.current_term);
+			/* Reset timeout to check again later */
+			raft_state.last_heartbeat = now_ms;
+			pthread_mutex_unlock(&raft_mutex);
+			return;
+		}
+	}
+	
 	/* Increment term and transition to candidate */
 	raft_state.current_term++;
 	raft_state.state = RAFT_STATE_CANDIDATE;
@@ -485,6 +501,9 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 			
 			mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "RequestVote from node %u term %"PRIu64" (our term %"PRIu64", our state %d)",
 			        candidate_id, term, raft_state.current_term, raft_state.state);
+			
+			/* Reset election timeout - there's an election in progress */
+			raft_state.last_heartbeat = monotonic_useconds() / 1000;
 			
 			/* Update term if necessary */
 			if (term > raft_state.current_term) {
