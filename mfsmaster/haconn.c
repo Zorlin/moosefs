@@ -734,11 +734,11 @@ void haconn_serve(struct pollfd *pdesc) {
 				if (sockstatus == 0) {
 					/* Connection successful */
 					conn->mode = HACONN_HANDSHAKE;
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: connection established, sending handshake");
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: connection established (fd=%d), sending handshake", conn->sock);
 					haconn_send_handshake(conn);
 				} else {
 					/* Connection failed */
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection failed - %s", strerror(sockstatus));
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection failed (fd=%d) - %s", conn->sock, strerror(sockstatus));
 					conn->mode = HACONN_KILL;
 				}
 			}
@@ -768,7 +768,19 @@ void haconn_serve(struct pollfd *pdesc) {
 		
 		/* Timeout check */
 		if (conn->mode == HACONN_CONNECTED && conn->lastread + 120.0 < now) {
-			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection timeout");
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection timeout (fd=%d)", conn->sock);
+			conn->mode = HACONN_KILL;
+		}
+		
+		/* Timeout connecting connections after 30 seconds */
+		if (conn->mode == HACONN_CONNECTING && conn->conntime + 30.0 < now) {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection timeout during connect (fd=%d)", conn->sock);
+			conn->mode = HACONN_KILL;
+		}
+		
+		/* Timeout handshake after 10 seconds */
+		if (conn->mode == HACONN_HANDSHAKE && conn->conntime + 10.0 < now) {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: handshake timeout (fd=%d)", conn->sock);
 			conn->mode = HACONN_KILL;
 		}
 		
@@ -902,5 +914,18 @@ void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length) {
 	
 	if (sent_count == 0) {
 		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_send_raft_broadcast: no connected peers to send to (total connections=%"PRIu32")", total_count);
+		/* Debug: Show connection states */
+		uint32_t connecting = 0, handshake = 0, connected = 0, killed = 0, free_count = 0;
+		for (conn = haconn_head; conn; conn = conn->next) {
+			switch (conn->mode) {
+				case HACONN_FREE: free_count++; break;
+				case HACONN_CONNECTING: connecting++; break;
+				case HACONN_HANDSHAKE: handshake++; break;
+				case HACONN_CONNECTED: connected++; break;
+				case HACONN_KILL: killed++; break;
+			}
+		}
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn_send_raft_broadcast: connection states - free:%"PRIu32" connecting:%"PRIu32" handshake:%"PRIu32" connected:%"PRIu32" killed:%"PRIu32, 
+		       free_count, connecting, handshake, connected, killed);
 	}
 }
