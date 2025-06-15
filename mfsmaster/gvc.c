@@ -244,8 +244,7 @@ static int gvc_request_version_range(uint32_t count) {
             gvc_state.current_version = meta_version();
         }
         
-        /* Ensure we start from a safe position by adding node_id offset */
-        /* This prevents version conflicts when leadership changes */
+        /* Ensure we start from a safe position */
         uint32_t node_id = ha_get_node_id();
         uint64_t min_version = gvc_state.current_version;
         
@@ -255,8 +254,9 @@ static int gvc_request_version_range(uint32_t count) {
             min_version = meta_ver;
         }
         
-        /* Add a safety margin based on node_id to avoid conflicts */
-        min_version = ((min_version / 1000) + 1) * 1000 + (node_id * 100);
+        /* Add a small safety margin to avoid conflicts */
+        /* Just add batch_size * node_id to create separation */
+        min_version = min_version + (count * node_id);
         
         if (min_version > gvc_state.current_version) {
             gvc_state.current_version = min_version;

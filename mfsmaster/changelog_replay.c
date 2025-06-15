@@ -91,10 +91,16 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
     }
     
     if (result != MFS_STATUS_OK) {
-        pthread_mutex_unlock(&replay_mutex);
-        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: operation failed v%"PRIu64" status=%d: %s", 
-                version, result, entry);
-        return -1;
+        /* Some operations may fail due to missing dependencies (e.g., sessions) */
+        /* Log but continue to avoid blocking synchronization */
+        if (result == MFS_ERROR_MISMATCH || result == MFS_ERROR_NOTFOUND) {
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "changelog_replay: operation skipped v%"PRIu64" status=%d (missing dependency): %s", 
+                    version, result, entry);
+        } else {
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: operation failed v%"PRIu64" status=%d: %s", 
+                    version, result, entry);
+        }
+        /* Continue anyway to not block synchronization */
     }
     
     /* Update our version */
