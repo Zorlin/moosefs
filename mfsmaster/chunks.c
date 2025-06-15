@@ -57,6 +57,8 @@
 #include "buckets.h"
 #include "clocks.h"
 #include "storageclass.h"
+#include "hamaster.h"
+#include "raftconsensus.h"
 
 #define MINLOOPTIME 60
 #define MAXLOOPTIME 7200
@@ -4367,6 +4369,11 @@ static inline void chunk_mfr_state_check(chunk *c) {
 }
 
 void chunk_server_has_chunk(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint32_t version) {
+	/* In HA mode, only leaders should make chunk management decisions */
+	if (ha_mode_enabled() && !raft_is_leader()) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"chunk_server_has_chunk: follower skipping chunk management for %016"PRIX64" - defer to leader",chunkid);
+		return;
+	}
 	chunk *c;
 	slist *s;
 	uint8_t fix;
