@@ -2642,12 +2642,23 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 		rversion = get8bit(&data);
 
 		if (eptr->registered==REGISTERED && rversion!=63) {
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"got register message from registered chunkserver !!! (servip=%u.%u.%u.%u:%u, servdesc=%s)",
-			        (eptr->servip >> 24) & 0xFF, (eptr->servip >> 16) & 0xFF, 
-			        (eptr->servip >> 8) & 0xFF, eptr->servip & 0xFF, eptr->servport,
-			        eptr->servdesc ? eptr->servdesc : "NULL");
-			eptr->mode = KILL;
-			return;
+			/* In HA mode after failover, allow re-registration of already registered chunkservers */
+			if (ha_mode_enabled() && raft_is_leader() && rversion==60) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"allowing re-registration of chunkserver %s after leadership change",
+				        eptr->servdesc ? eptr->servdesc : "unknown");
+				eptr->registered = UNREGISTERED;
+				/* Clean up old registration state */
+				if (eptr->csid < MAXCSCOUNT && cstab[eptr->csid].valid) {
+					chunk_server_disconnected(eptr->csid);
+				}
+			} else {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"got register message from registered chunkserver !!! (servip=%u.%u.%u.%u:%u, servdesc=%s)",
+				        (eptr->servip >> 24) & 0xFF, (eptr->servip >> 16) & 0xFF, 
+				        (eptr->servip >> 8) & 0xFF, eptr->servip & 0xFF, eptr->servport,
+				        eptr->servdesc ? eptr->servdesc : "NULL");
+				eptr->mode = KILL;
+				return;
+			}
 		}
 
 		if (rversion==60) {
