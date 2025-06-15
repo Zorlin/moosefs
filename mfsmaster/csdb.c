@@ -43,6 +43,7 @@
 #include "sockets.h"
 #include "hamaster.h"
 #include "crdtstore.h"
+#include "raftconsensus.h"
 
 #define CSDB_OP_ADD 0
 #define CSDB_OP_DEL 1
