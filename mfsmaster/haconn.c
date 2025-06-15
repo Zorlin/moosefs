@@ -1221,15 +1221,57 @@ int haconn_get_leader_info(uint32_t leader_id, uint32_t *leader_ip, uint16_t *le
 	
 	/* Find the connection to the leader peer */
 	for (conn = haconn_head; conn != NULL; conn = conn->next) {
-		if (conn->peerid == leader_id && conn->mode == 3) { /* mode 3 = connected */
-			*leader_ip = conn->peerip;
-			/* Convert HA port (9430) to client port (9421) */
-			*leader_port = 9421;
-			return 0;
+		if (conn->peerid == leader_id && conn->mode == HACONN_CONNECTED) {
+			if (conn->peerip != 0) {
+				*leader_ip = conn->peerip;
+				*leader_port = 9421; /* Standard MooseFS client port */
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_get_leader_info: found leader %u at %u.%u.%u.%u:%u", 
+				        leader_id, (conn->peerip >> 24) & 0xFF, (conn->peerip >> 16) & 0xFF, 
+				        (conn->peerip >> 8) & 0xFF, conn->peerip & 0xFF, *leader_port);
+				return 0;
+			}
 		}
 	}
 	
-	/* Leader not found in connections */
+	/* If we can't find it in active connections, try to parse from peer config */
+	if (peers_config && strlen(peers_config) > 0) {
+		char *peers_copy = strdup(peers_config);
+		char *peer = strtok(peers_copy, ",");
+		uint32_t peer_position = 1;
+		
+		while (peer) {
+			if (peer_position == leader_id) {
+				/* Found the leader in config */
+				char *colon = strchr(peer, ':');
+				if (colon) {
+					*colon = '\0'; /* Terminate hostname part */
+				}
+				
+				/* Resolve the hostname to IP */
+				uint32_t ip = 0;
+				uint16_t resolved_port = 0;
+				if (tcpresolve(peer, NULL, &ip, &resolved_port, 0) >= 0 && ip > 0) {
+					*leader_ip = ip;
+					*leader_port = 9421; /* Standard MooseFS client port */
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn_get_leader_info: resolved leader %u from config: %s -> %u.%u.%u.%u:%u", 
+					        leader_id, peer, (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, 
+					        (ip >> 8) & 0xFF, ip & 0xFF, *leader_port);
+					free(peers_copy);
+					return 0;
+				} else {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_get_leader_info: failed to resolve leader %u hostname: %s", leader_id, peer);
+				}
+				break;
+			}
+			peer = strtok(NULL, ",");
+			peer_position++;
+		}
+		
+		free(peers_copy);
+	}
+	
+	/* Leader not found in connections or config */
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_get_leader_info: leader %u not found in connections or config", leader_id);
 	return -1;
 }
 
