@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <arpa/inet.h>
 #include <inttypes.h>
 #include <stddef.h>
 
@@ -275,6 +276,14 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				
 				conn->mode = HACONN_CONNECTED;
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: handshake complete with peer %u (received request)", conn->peerid);
+				
+				/* Add peer to Raft */
+				extern int raft_add_peer(uint32_t node_id, const char *host, uint16_t port);
+				struct in_addr addr;
+				addr.s_addr = conn->peerip;
+				char ip_str[INET_ADDRSTRLEN];
+				inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+				raft_add_peer(conn->peerid, ip_str, conn->peerport);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid handshake request");
 				conn->mode = HACONN_KILL;
@@ -289,6 +298,14 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				conn->peerid = get32bit(&ptr);
 				conn->mode = HACONN_CONNECTED;
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: handshake complete with peer %u (received response)", conn->peerid);
+				
+				/* Add peer to Raft */
+				extern int raft_add_peer(uint32_t node_id, const char *host, uint16_t port);
+				struct in_addr addr;
+				addr.s_addr = conn->peerip;
+				char ip_str[INET_ADDRSTRLEN];
+				inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+				raft_add_peer(conn->peerid, ip_str, conn->peerport);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid handshake response");
 				conn->mode = HACONN_KILL;
