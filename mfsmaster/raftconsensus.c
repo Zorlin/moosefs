@@ -640,8 +640,8 @@ int raftconsensus_init(void) {
 		}
 	}
 	
-	/* Register periodic tick */
-	main_time_register(0, 50000, raftconsensus_tick_wrapper); /* 50ms intervals */
+	/* Register periodic tick - every 1 second */
+	main_time_register(1, 0, raftconsensus_tick_wrapper);
 	
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_init: initialized with node_id=%"PRIu32" total_nodes=%"PRIu32" - registered tick function", 
 	        local_node_id, total_nodes);
