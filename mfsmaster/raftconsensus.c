@@ -287,8 +287,12 @@ void raft_start_election(raft_shard_t *shard) {
 	
 	/* Send RequestVote to all peers */
 	if (total_nodes > 1) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: broadcasting RequestVote for shard %"PRIu32, shard->shard_id);
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: broadcasting RequestVote for shard %"PRIu32" (msg_size=%u total_nodes=%u)", 
+		        shard->shard_id, msg_size, total_nodes);
 		haconn_send_raft_broadcast(msg, msg_size);
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: RequestVote broadcast completed for shard %"PRIu32, shard->shard_id);
+	} else {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: single node cluster, no broadcast needed for shard %"PRIu32, shard->shard_id);
 	}
 	
 	/* Check if we have majority of votes */
@@ -508,6 +512,9 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				log_index = get64bit(&ptr);
 				log_term = get64bit(&ptr);
 				
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: processing RequestVote from node %u for shard %u term %"PRIu64" (our term=%"PRIu64" voted_for=%u)", 
+				        from_node, shard_id, term, shard->current_term, shard->voted_for);
+				
 				/* Update HLC from remote */
 				hlc_update(&global_hlc, NULL);
 				
@@ -515,6 +522,7 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				int vote_granted = 0;
 				if (term > shard->current_term) {
 					/* New term, update and reset vote */
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: updating to newer term %"PRIu64" for shard %u", term, shard_id);
 					shard->current_term = term;
 					shard->voted_for = 0;
 					shard->state = RAFT_STATE_FOLLOWER;
@@ -526,9 +534,14 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				    log_term >= (shard->log_tail ? shard->log_tail->term : 0) &&
 				    log_index >= shard->log_count) {
 					/* Grant vote */
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: granting vote to candidate %u for shard %u term %"PRIu64, candidate_id, shard_id, term);
 					shard->voted_for = candidate_id;
 					vote_granted = 1;
 					shard->last_heartbeat = monotonic_useconds() / 1000;
+				} else {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: denying vote to candidate %u for shard %u (term_match=%d voted_for=%u log_ok=%d)", 
+					        candidate_id, shard_id, (term == shard->current_term), shard->voted_for, 
+					        (log_term >= (shard->log_tail ? shard->log_tail->term : 0) && log_index >= shard->log_count));
 				}
 				
 				/* Send response */
@@ -539,6 +552,8 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				put8bit(&rptr, vote_granted);
 				response_size = rptr - response;
 				
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: sending vote response to node %u: %s (response_size=%u)", 
+				        from_node, vote_granted ? "GRANTED" : "DENIED", response_size);
 				haconn_send_raft_response(from_node, response, response_size);
 				
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "raft: vote %s for shard %u candidate %u term %"PRIu64,
@@ -551,8 +566,13 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				term = get64bit(&ptr);
 				uint8_t vote_granted = get8bit(&ptr);
 				
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: received vote response from node %u for shard %u: %s (term=%"PRIu64" our_term=%"PRIu64" votes=%u/%u)", 
+				        from_node, shard_id, vote_granted ? "GRANTED" : "DENIED", term, shard->current_term, 
+				        shard->votes_received, total_nodes);
+				
 				if (term > shard->current_term) {
 					/* Newer term, step down */
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: stepping down due to newer term %"PRIu64" for shard %u", term, shard_id);
 					shard->current_term = term;
 					shard->state = RAFT_STATE_FOLLOWER;
 					shard->voted_for = 0;
@@ -560,12 +580,21 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				} else if (term == shard->current_term && vote_granted) {
 					/* Got a vote */
 					shard->votes_received++;
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: vote counted for shard %u, now have %u/%u votes (need %u)", 
+					        shard_id, shard->votes_received, total_nodes, (total_nodes / 2) + 1);
 					
 					/* Check if we have majority */
 					if (shard->votes_received > total_nodes / 2) {
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: achieved majority for shard %u, becoming leader", shard_id);
 						raft_become_leader(shard);
 					}
+				} else {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: vote response ignored for shard %u (term_match=%d vote_granted=%d)", 
+					        shard_id, (term == shard->current_term), vote_granted);
 				}
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: vote response rejected for shard %u (length=%u state=%d expected_state=%d)", 
+				        shard_id, length, shard->state, RAFT_STATE_CANDIDATE);
 			}
 			break;
 			
