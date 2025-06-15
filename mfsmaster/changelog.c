@@ -221,18 +221,11 @@ void changelog_rotate(uint8_t rotate_flags) {
 }
 
 void changelog_mr(uint64_t version,const char *data) {
-	// HA CRDT Integration: Store and propagate metadata changes
+	// HA Integration: Propagate changelog entries through dedicated mechanism
 	if (ha_mode_enabled()) {
-		// Store changelog entry in CRDT with version as key
-		crdt_store_t *store = crdtstore_get_main_store();
-		if (store != NULL) {
-			// Store as LWW register with version as timestamp
-			uint32_t data_len = strlen(data) + 1;
-			if (crdtstore_put(store, version, CRDT_LWW_REGISTER, data, data_len) == 0) {
-				// Propagate to other masters via gossip
-				gossip_broadcast_changelog_entry(version, data, data_len);
-			}
-		}
+		// Use gossip to propagate changelog entries (not CRDT)
+		uint32_t data_len = strlen(data) + 1;
+		gossip_broadcast_changelog_entry(version, data, data_len);
 	}
 	
 	if (ChangelogSaveMode==SAVEMODE_BACKGROUND) {
