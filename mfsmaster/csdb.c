@@ -253,6 +253,28 @@ void* csdb_new_connection(uint32_t ip,uint16_t port,uint16_t csid,void *eptr) {
 	csdbhash[hash] = csptr;
 	servers++;
 	changelog("%"PRIu32"|CSDBOP(%u,%"PRIu32",%"PRIu16",%"PRIu16")",main_time(),CSDB_OP_ADD,ip,port,csptr->csid);
+	
+	/* In HA mode, also store chunkserver in CRDT for replication */
+	if (ha_mode_enabled()) {
+		mfs_chunkserver_t cs;
+		crdt_store_t *store;
+		
+		memset(&cs, 0, sizeof(cs));
+		cs.servip = ip;
+		cs.servport = port;
+		cs.csid = csptr->csid;
+		cs.registered = 1;  /* Mark as registered */
+		
+		store = crdtstore_get_main_store();
+		if (store != NULL) {
+			if (crdtstore_put_chunkserver(store, &cs) < 0) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"csdb: failed to store chunkserver in CRDT: %s:%"PRIu16, strip, port);
+			} else {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb: stored chunkserver in CRDT: %s:%"PRIu16" (csid=%"PRIu16")", strip, port, csptr->csid);
+			}
+		}
+	}
+	
 	return csptr;
 }
 
@@ -277,6 +299,28 @@ void csdb_lost_connection(void *v_csptr) {
 		disconnected_servers++;
 		if (csptr->maintenance!=MAINTENANCE_OFF) {
 			disconnected_servers_in_maintenance++;
+		}
+		
+		/* In HA mode, update chunkserver as disconnected in CRDT */
+		if (ha_mode_enabled()) {
+			mfs_chunkserver_t cs;
+			crdt_store_t *store;
+			
+			memset(&cs, 0, sizeof(cs));
+			cs.servip = csptr->ip;
+			cs.servport = csptr->port;
+			cs.csid = csptr->csid;
+			cs.registered = 0;  /* Mark as unregistered/disconnected */
+			
+			store = crdtstore_get_main_store();
+			if (store != NULL) {
+				if (crdtstore_put_chunkserver(store, &cs) < 0) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"csdb: failed to update disconnected chunkserver in CRDT");
+				} else {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb: marked chunkserver as disconnected in CRDT: %u.%u.%u.%u:%"PRIu16,
+					        (csptr->ip>>24)&0xFF, (csptr->ip>>16)&0xFF, (csptr->ip>>8)&0xFF, csptr->ip&0xFF, csptr->port);
+				}
+			}
 		}
 	}
 //	csdb_disconnect_check();
@@ -1077,16 +1121,6 @@ void csdb_sync_from_crdt(void) {
 	crdt_store_t *store;
 	
 	if (!ha_mode_enabled()) {
-		return;
-	}
-	
-	/* FIXME: Temporarily disable CRDT sync for chunkservers on followers
-	 * The current implementation causes followers to wipe their csdb because
-	 * chunkserver registrations are not being written to CRDT.
-	 * This is a temporary fix - the proper solution is to implement
-	 * CRDT synchronization for chunkserver registrations.
-	 */
-	if (!raft_is_leader()) {
 		return;
 	}
 	
