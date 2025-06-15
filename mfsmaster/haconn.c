@@ -610,6 +610,9 @@ int haconn_init(void) {
 					}
 				}
 				
+				/* Debug: Log peer connection decision */
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: peer %s:%u is_self=%d", peer, port, is_self);
+				
 				if (!is_self) {
 					/* Connect to peer */
 					int csock = tcpsocket();
@@ -617,8 +620,12 @@ int haconn_init(void) {
 						uint32_t ip = 0;
 						uint16_t resolved_port = 0;
 						if (tcpresolve(peer, NULL, &ip, &resolved_port, 0) >= 0 && ip > 0) {
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: resolved %s to IP %u.%u.%u.%u", peer, 
+							       (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
 							tcpnonblock(csock);
 							int connect_result = tcpnumconnect(csock, ip, port);
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: connect result for %s:%u = %d (errno=%d:%s)", 
+							       peer, port, connect_result, errno, strerror(errno));
 							if (connect_result >= 0 || errno == EINPROGRESS) {
 								/* Connection successful or in progress */
 								tcpnodelay(csock);
@@ -703,6 +710,10 @@ void haconn_desc(struct pollfd *pdesc, uint32_t *ndesc) {
 		if (pdesc[pos].events != 0) {
 			pdesc[pos].fd = conn->sock;
 			conn->pdescpos = pos;
+			/* Debug: Log poll setup for connecting connections */
+			if (conn->mode == HACONN_CONNECTING) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_desc: setup POLLOUT for fd=%d at pos=%u", conn->sock, pos);
+			}
 			pos++;
 		}
 	}
@@ -745,6 +756,12 @@ void haconn_serve(struct pollfd *pdesc) {
 		next_conn = conn->next;
 		
 		if (conn->pdescpos >= 0) {
+			/* Debug: Log events for connecting connections */
+			if (conn->mode == HACONN_CONNECTING && pdesc[conn->pdescpos].revents != 0) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: fd=%d revents=0x%x (POLLOUT=0x%x POLLERR=0x%x POLLHUP=0x%x)", 
+				       conn->sock, pdesc[conn->pdescpos].revents, POLLOUT, POLLERR, POLLHUP);
+			}
+			
 			/* Handle connection completion for outgoing connections */
 			if (conn->mode == HACONN_CONNECTING && (pdesc[conn->pdescpos].revents & POLLOUT)) {
 				int sockstatus = tcpgetstatus(conn->sock);
@@ -758,6 +775,13 @@ void haconn_serve(struct pollfd *pdesc) {
 					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection failed (fd=%d) - %s", conn->sock, strerror(sockstatus));
 					conn->mode = HACONN_KILL;
 				}
+			}
+			
+			/* Handle connection errors */
+			if (conn->mode == HACONN_CONNECTING && (pdesc[conn->pdescpos].revents & (POLLERR | POLLHUP))) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection error/hangup (fd=%d) revents=0x%x", 
+				       conn->sock, pdesc[conn->pdescpos].revents);
+				conn->mode = HACONN_KILL;
 			}
 			
 			if ((pdesc[conn->pdescpos].revents & POLLIN) && (conn->mode == HACONN_CONNECTED || conn->mode == HACONN_HANDSHAKE)) {
