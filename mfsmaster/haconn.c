@@ -338,9 +338,14 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 			
 		case MFSHA_RAFT_RESPONSE:
 			/* Forward to Raft consensus */
-			if (length >= 4) {
-				/* TODO: Call raftconsensus_handle_response(conn->peerid, data, length) */
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received Raft response, %u bytes", length);
+			if (conn->mode != HACONN_CONNECTED) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: received Raft response before handshake");
+				conn->mode = HACONN_KILL;
+				break;
+			}
+			if (length >= 1) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: received Raft response from peer %u, %u bytes", conn->peerid, length);
+				raft_handle_incoming_message(conn->peerid, data, length);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid Raft response size");
 			}
