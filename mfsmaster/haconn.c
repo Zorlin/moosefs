@@ -705,6 +705,7 @@ int haconn_init(void) {
 	if (peers_config && strlen(peers_config) > 0) {
 		char *peers_copy = strdup(peers_config);
 		char *peer = strtok(peers_copy, ",");
+		uint32_t peer_position = 1; /* Track position in peer list */
 		
 		while (peer) {
 			char *colon = strchr(peer, ':');
@@ -713,27 +714,12 @@ int haconn_init(void) {
 				/* Ignore port from config - always use HA port 9430 */
 				uint16_t port = 9430;
 				
-				/* Skip self - check if it's not our own address */
-				int is_self = 0;
-				if (strcmp(peer, "localhost") == 0 || strcmp(peer, "127.0.0.1") == 0) {
-					if (port == listen_port) {
-						is_self = 1;
-					}
-				} else {
-					/* Check if this peer matches our hostname and port */
-					char myhostname[256];
-					if (gethostname(myhostname, sizeof(myhostname)) == 0) {
-						char *dot = strchr(myhostname, '.');
-						if (dot) *dot = '\0'; /* Compare short hostname */
-						
-						if (strstr(peer, myhostname) != NULL && port == listen_port) {
-							is_self = 1;
-						}
-					}
-				}
+				/* Skip self based on node ID matching peer position */
+				int is_self = (peer_position == my_nodeid);
 				
 				/* Debug: Log peer connection decision */
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: peer %s:%u is_self=%d", peer, port, is_self);
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: peer %s:%u position=%u is_self=%d", 
+				        peer, port, peer_position, is_self);
 				
 				if (!is_self) {
 					/* Connect to peer */
@@ -770,6 +756,7 @@ int haconn_init(void) {
 				}
 			}
 			peer = strtok(NULL, ",");
+			peer_position++; /* Increment position for next peer */
 		}
 		
 		free(peers_copy);

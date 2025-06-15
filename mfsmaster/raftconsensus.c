@@ -685,9 +685,14 @@ void raftconsensus_tick(double now) {
 			}
 			
 			/* Check lease expiry */
-			if (now > raft_state.leader_lease_expiry - 5) {
-				/* Lease about to expire - renew by sending heartbeats */
-				raft_state.leader_lease_expiry = now + raft_state.lease_duration;
+			{
+				uint64_t now_seconds = monotonic_seconds();
+				if (now_seconds > raft_state.leader_lease_expiry - 5) {
+					/* Lease about to expire - renew by sending heartbeats */
+					raft_state.leader_lease_expiry = now_seconds + raft_state.lease_duration;
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Renewed leader lease until %"PRIu64" (now=%"PRIu64")",
+					        raft_state.leader_lease_expiry, now_seconds);
+				}
 			}
 			break;
 	}
