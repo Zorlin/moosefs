@@ -114,6 +114,13 @@ static inline void changelog_store_logstring(uint64_t version,uint8_t *logstr,ui
 	matomlserv_broadcast_logstring(version,logstr,logstrsize);
 //	matomaserv_broadcast_logstring(version,(uint8_t*)printbuff,leng);
 
+	/* Ring-based log shipping to chunkservers */
+	extern void metasync_ship_to_ring(uint64_t version, const uint8_t *data, uint32_t length);
+	extern int raft_is_leader(void);
+	if (raft_is_leader()) {
+		metasync_ship_to_ring(version, logstr, logstrsize);
+	}
+
 	if (ChangelogSecondsToRemember==0) {
 		while (old_changes_head) {
 			oc = old_changes_head->next;

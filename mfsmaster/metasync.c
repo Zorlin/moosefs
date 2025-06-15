@@ -468,6 +468,16 @@ void metasync_get_status(uint64_t *local_version, uint64_t *highest_peer_version
     pthread_mutex_unlock(&sync_state.mutex);
 }
 
+/* Update filesystem counters after metadata sync */
+void metasync_update_fs_counters(void) {
+    extern void fs_printinfo(void);
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: updating filesystem counters after sync");
+    
+    /* Print the current counters to logs */
+    fs_printinfo();
+}
+
 /* Request specific version range from a peer */
 void metasync_request_versions(uint32_t node_id, uint64_t from_version, uint64_t to_version) {
     uint8_t msg[20];
