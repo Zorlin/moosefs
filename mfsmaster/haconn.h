@@ -38,4 +38,7 @@ void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length);
 /* Send changelog entry to all peers */
 void haconn_send_changelog_entry(uint64_t version, const uint8_t *data, uint32_t length);
 
+/* Get leader connection information for client redirection */
+int haconn_get_leader_info(uint32_t leader_id, uint32_t *leader_ip, uint16_t *leader_port);
+
 #endif

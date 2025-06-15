@@ -75,6 +75,7 @@
 #include "mfsalloc.h"
 #include "multilan.h"
 #include "hamaster.h"
+#include "haconn.h"
 #include "shardmgr.h"
 #include "raftconsensus.h"
 
@@ -1670,11 +1671,26 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 	/* In HA mode, only the leader should accept client registrations */
 	if (ha_mode_enabled() && !raft_is_leader()) {
 		uint32_t leader_id = raft_get_leader();
+		uint32_t leader_ip = 0;
+		uint16_t leader_port = 0;
+		
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client registration rejected - not leader (leader is node %u)", leader_id);
 		
-		/* Send rejection response */
-		uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_FUSE_REGISTER, 1);
-		put8bit(&ptr, MFS_ERROR_EPERM); /* Operation not permitted - redirect to leader */
+		/* Try to get leader connection information for redirection */
+		if (leader_id != 0 && haconn_get_leader_info(leader_id, &leader_ip, &leader_port) == 0) {
+			/* Send redirection response with leader info */
+			uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_FUSE_REGISTER, 7);
+			put8bit(&ptr, MFS_ERROR_EPERM); /* Operation not permitted - redirect to leader */
+			put32bit(&ptr, leader_ip);      /* Leader IP address */
+			put16bit(&ptr, leader_port);    /* Leader port */
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client redirection: leader is at %u.%u.%u.%u:%u", 
+			        (leader_ip >> 24) & 0xFF, (leader_ip >> 16) & 0xFF, (leader_ip >> 8) & 0xFF, leader_ip & 0xFF, leader_port);
+		} else {
+			/* Send standard rejection response */
+			uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_FUSE_REGISTER, 1);
+			put8bit(&ptr, MFS_ERROR_EPERM); /* Operation not permitted - redirect to leader */
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"Client redirection: leader info not available (leader_id=%u)", leader_id);
+		}
 		return;
 	}
 
