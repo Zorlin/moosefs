@@ -46,6 +46,9 @@ static hlc_timestamp_t global_hlc;
 static uint64_t leader_lease_duration = 30000; /* 30 second leader leases */
 static uint32_t total_nodes = 3; /* Total nodes in cluster - should be from config */
 
+/* Forward declarations */
+void raftconsensus_tick_wrapper(void);
+
 /* Random election timeout between min and max */
 static uint64_t get_election_timeout(uint64_t base_timeout) {
 	return base_timeout + (rndu32_ranged(base_timeout / 2));
