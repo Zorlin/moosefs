@@ -137,7 +137,7 @@ static haconn_t* haconn_new(int sock) {
 	conn->next = haconn_head;
 	haconn_head = conn;
 	
-	conn->mode = HACONN_HANDSHAKE;
+	conn->mode = HACONN_HANDSHAKE;  /* Default for incoming connections */
 	conn->sock = sock;
 	conn->pdescpos = -1;
 	conn->lastread = conn->lastwrite = conn->conntime = monotonic_seconds();
@@ -156,9 +156,28 @@ static haconn_t* haconn_new(int sock) {
 	conn->outputhead = NULL;
 	conn->outputtail = &(conn->outputhead);
 	
-	/* Send handshake immediately */
-	haconn_send_handshake(conn);
+	/* Don't send handshake automatically - let caller decide */
 	
+	return conn;
+}
+
+/* Create new outgoing connection */
+static haconn_t* haconn_new_outgoing(int sock) {
+	haconn_t *conn = haconn_new(sock);
+	if (conn) {
+		conn->mode = HACONN_CONNECTING;  /* Mark as connecting for outgoing */
+	}
+	return conn;
+}
+
+/* Create new incoming connection */
+static haconn_t* haconn_new_incoming(int sock) {
+	haconn_t *conn = haconn_new(sock);
+	if (conn) {
+		conn->mode = HACONN_HANDSHAKE;  /* Ready for handshake on incoming */
+		/* Send handshake immediately for incoming connections */
+		haconn_send_handshake(conn);
+	}
 	return conn;
 }
 
@@ -603,9 +622,8 @@ int haconn_init(void) {
 							if (connect_result >= 0 || errno == EINPROGRESS) {
 								/* Connection successful or in progress */
 								tcpnodelay(csock);
-								haconn_t *new_conn = haconn_new(csock);
+								haconn_t *new_conn = haconn_new_outgoing(csock);
 								if (new_conn != NULL) {
-									new_conn->mode = HACONN_CONNECTING; /* Mark as connecting */
 									mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: initiated connection to peer %s:%u (fd=%d)", peer, port, csock);
 								} else {
 									tcpclose(csock);
@@ -711,12 +729,11 @@ void haconn_serve(struct pollfd *pdesc) {
 			if (newfd >= 0) {
 				tcpnonblock(newfd);
 				tcpnodelay(newfd);
-				if (haconn_new(newfd) == NULL) {
+				if (haconn_new_incoming(newfd) == NULL) {
 					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: cannot accept connection");
 					tcpclose(newfd);
 				} else {
 					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: accepted new connection");
-					/* TODO: Exchange node IDs during handshake */
 				}
 			}
 		}
