@@ -557,7 +557,7 @@ uint8_t csdb_mr_op(uint8_t op,uint32_t ip,uint16_t port, uint32_t arg) {
 			csdbhash[hash] = csptr;
 			servers++;
 			disconnected_servers++;
-			meta_version_inc();
+			/* Don't increment version during restore/replay - version is already set by changelog */
 			return MFS_STATUS_OK;
 		case CSDB_OP_DEL:
 			hash = CSDBHASHFN(ip,port);
