@@ -3650,16 +3650,18 @@ void matocsserv_serve(struct pollfd *pdesc) {
 				uint16_t leader_port;
 				
 				if (raftconsensus_get_leader_address(&leader_ip, &leader_port) == 0) {
+					char stripbuf[32];
+					univmakestrip(stripbuf, leader_ip);
 					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"redirecting chunkserver to leader at %s:%u",
-					        uinttoipstr(leader_ip), leader_port);
+					        stripbuf, leader_port);
 					/* Send a redirect message and close the connection */
-					uint8_t redirect_msg[9];
+					uint8_t redirect_msg[13];
 					uint8_t *ptr = redirect_msg;
 					put32bit(&ptr,MATOCS_HA_LEADER_REDIRECT);
-					put32bit(&ptr,5); /* length */
+					put32bit(&ptr,5); /* length: 1 byte flag + 4 bytes IP */
 					put8bit(&ptr,1); /* redirect flag */
 					put32bit(&ptr,leader_ip);
-					tcpwrite(ns,redirect_msg,9);
+					tcptowrite(ns,redirect_msg,13,1000);
 				} else {
 					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"no leader available to redirect chunkserver");
 				}
