@@ -596,14 +596,23 @@ static void raft_apply_committed_entries(void) {
 /* Periodic tick function */
 void raftconsensus_tick(double now) {
 	uint64_t now_ms = (uint64_t)(now * 1000);
+	static uint64_t last_tick_log = 0;
 	
 	pthread_mutex_lock(&raft_mutex);
+	
+	/* Log tick status every 10 seconds */
+	if (now_ms - last_tick_log > 10000) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Raft tick: state=%d, last_heartbeat=%"PRIu64", now=%"PRIu64", timeout=%"PRIu64", peers=%u",
+		        raft_state.state, raft_state.last_heartbeat, now_ms, raft_state.election_timeout, raft_state.peer_count);
+		last_tick_log = now_ms;
+	}
 	
 	switch (raft_state.state) {
 		case RAFT_STATE_FOLLOWER:
 			/* Check election timeout */
 			if (now_ms - raft_state.last_heartbeat > raft_state.election_timeout) {
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Election timeout - starting election");
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Election timeout - starting election (last_heartbeat=%"PRIu64", now=%"PRIu64", timeout=%"PRIu64")",
+				        raft_state.last_heartbeat, now_ms, raft_state.election_timeout);
 				pthread_mutex_unlock(&raft_mutex);
 				raft_start_election();
 				return;
