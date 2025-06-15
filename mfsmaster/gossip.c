@@ -105,9 +105,8 @@ void gossip_broadcast_changelog_entry(uint64_t version, const char *data, uint32
 	memcpy(ptr, data, data_len);
 	psize = 8 + 4 + data_len;
 	
-	/* Send to all connected HA peers via haconn */
-	haconn_send_crdt_delta(packet, psize);
-	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "gossip_broadcast: sent changelog v%"PRIu64" (%u bytes) to HA peers", 
+	/* TODO: Implement proper changelog synchronization protocol */
+	/* For now, disable changelog broadcast to prevent CRDT corruption */
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "gossip_broadcast: changelog sync disabled (v%"PRIu64" %u bytes)", 
 	        version, data_len);
 }

@@ -25,6 +25,7 @@
 #include "crdtstore.h"
 #include "clocks.h"
 #include "hashfn.h"
+#include "raftconsensus.h"
 
 /* GVC state structure */
 typedef struct {
@@ -236,8 +237,13 @@ int gvc_allocate_versions(uint32_t count, version_range_t *range) {
 static int gvc_request_version_range(uint32_t count) {
     version_range_t range;
     
-    if (gvc_state.role == GVC_ROLE_LEADER) {
+    /* Check if we're the leader of shard 0 (GVC shard) */
+    if (raft_is_leader(0)) {
         /* We are the leader, allocate directly */
+        if (gvc_state.current_version == 0) {
+            gvc_state.current_version = meta_version();
+        }
+        
         range.start = gvc_state.current_version;
         range.end = gvc_state.current_version + count;
         gvc_state.current_version = range.end;
@@ -245,6 +251,9 @@ static int gvc_request_version_range(uint32_t count) {
         gvc_state.local_version_start = range.start;
         gvc_state.local_version_end = range.end;
         gvc_state.local_version_next = range.start;
+        
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "GVC allocated versions [%"PRIu64"-%"PRIu64"] as shard 0 leader",
+                range.start, range.end);
         
         return 0;
     }
@@ -260,8 +269,9 @@ static int gvc_request_version_range(uint32_t count) {
     gvc_state.local_version_next = gvc_state.local_version_start;
     gvc_state.current_version = gvc_state.local_version_end;
     
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC using local allocation [%"PRIu64"-%"PRIu64"] - no leader available",
-            gvc_state.local_version_start, gvc_state.local_version_end);
+    uint32_t leader = raft_get_leader(0);
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC using local allocation [%"PRIu64"-%"PRIu64"] - leader is node %u",
+            gvc_state.local_version_start, gvc_state.local_version_end, leader);
     
     return 0;
 }
