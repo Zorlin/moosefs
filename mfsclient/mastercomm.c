@@ -1606,6 +1606,15 @@ int fs_connect(uint8_t oninit,struct connect_args_t *cargs) {
 			}
 			
 			/* Prevent redirect loops - don't redirect to the same server */
+			if (oninit) {
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_DEBUG,"redirect check: leader=%u.%u.%u.%u:%u current=%u.%u.%u.%u:%u",
+				        (leader_ip >> 24) & 0xFF, (leader_ip >> 16) & 0xFF, (leader_ip >> 8) & 0xFF, leader_ip & 0xFF, leader_port,
+				        (masterip >> 24) & 0xFF, (masterip >> 16) & 0xFF, (masterip >> 8) & 0xFF, masterip & 0xFF, masterport);
+			} else {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"redirect check: leader=%u.%u.%u.%u:%u current=%u.%u.%u.%u:%u",
+				        (leader_ip >> 24) & 0xFF, (leader_ip >> 16) & 0xFF, (leader_ip >> 8) & 0xFF, leader_ip & 0xFF, leader_port,
+				        (masterip >> 24) & 0xFF, (masterip >> 16) & 0xFF, (masterip >> 8) & 0xFF, masterip & 0xFF, masterport);
+			}
 			if (leader_ip == masterip && leader_port == masterport) {
 				if (oninit) {
 					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"redirect loop detected - leader points to same server");
