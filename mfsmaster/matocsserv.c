@@ -2648,7 +2648,7 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 				        eptr->servdesc ? eptr->servdesc : "unknown");
 				eptr->registered = UNREGISTERED;
 				/* Clean up old registration state */
-				if (eptr->csid < MAXCSCOUNT && cstab[eptr->csid].valid) {
+				if (eptr->csid < MAXCSCOUNT) {
 					chunk_server_disconnected(eptr->csid);
 				}
 			} else {

@@ -29,6 +29,7 @@
 #include "metadata.h"
 #include "restore.h"
 #include "changelog_replay.h"
+#include "chunks.h"
 
 /* Global Raft state - single group, no sharding */
 static raft_context_t raft_state;
@@ -477,6 +478,9 @@ static void raft_become_leader(void) {
 	
 	/* Send initial heartbeats (we already hold the mutex) */
 	raft_send_heartbeats_internal();
+	
+	/* Reset chunk server registration counters after becoming leader */
+	chunk_reset_register_counters();
 }
 
 /* Send RequestVote RPC */

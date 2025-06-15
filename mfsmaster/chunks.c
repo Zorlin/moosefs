@@ -4730,6 +4730,23 @@ void chunk_server_disconnected(uint16_t csid) {
 	matoclserv_fuse_invalidate_chunk_cache();
 }
 
+void chunk_reset_register_counters(void) {
+	uint16_t csid;
+	uint16_t unregistered_count = 0;
+	
+	/* Count unregistered but valid chunkservers */
+	for (csid = csusedhead ; csid < MAXCSCOUNT ; csid = cstab[csid].next) {
+		if (cstab[csid].valid && cstab[csid].registered==0) {
+			unregistered_count++;
+		}
+	}
+	
+	if (csregisterinprogress != unregistered_count) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"fixing csregisterinprogress counter: %u -> %u", csregisterinprogress, unregistered_count);
+		csregisterinprogress = unregistered_count;
+	}
+}
+
 void chunk_server_disconnection_loop(void) {
 	uint32_t i;
 	chunk *c,*cn;
