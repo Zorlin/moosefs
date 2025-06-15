@@ -3828,7 +3828,7 @@ void matocsserv_term(void) {
 		for (eptr = matocsservhead; eptr; eptr = eptr->next) {
 			if (eptr->mode == DATA && eptr->registered == REGISTERED) {
 				/* Send immediate disconnect signal */
-				uint8_t *buff = matocsserv_create_packet(eptr,MATOCS_HA_LEADER_SHUTDOWN,0);
+				matocsserv_create_packet(eptr,MATOCS_HA_LEADER_SHUTDOWN,0);
 			}
 		}
 		/* Trigger immediate election excluding this node */
