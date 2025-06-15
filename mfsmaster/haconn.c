@@ -682,6 +682,12 @@ void haconn_term(void) {
 void haconn_desc(struct pollfd *pdesc, uint32_t *ndesc) {
 	haconn_t *conn;
 	uint32_t pos = *ndesc;
+	static uint32_t desc_call_count = 0;
+	
+	desc_call_count++;
+	if ((desc_call_count % 100) == 1) { /* Log every 100th call */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_desc: called %u times, starting pos=%u", desc_call_count, pos);
+	}
 	
 	/* Listen socket */
 	if (listen_sock >= 0) {
@@ -726,6 +732,12 @@ void haconn_serve(struct pollfd *pdesc) {
 	double now;
 	int newfd;
 	uint32_t i;
+	static uint32_t serve_call_count = 0;
+	
+	serve_call_count++;
+	if ((serve_call_count % 100) == 1) { /* Log every 100th call */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_serve: called %u times", serve_call_count);
+	}
 	
 	now = monotonic_seconds();
 	

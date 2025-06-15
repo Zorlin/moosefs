@@ -690,15 +690,14 @@ void raftconsensus_reload(void) {
 
 /* Collect file descriptors for polling */
 void raftconsensus_desc(struct pollfd *pdesc, uint32_t *ndesc) {
-	/* TODO: Add network sockets for Raft communication */
-	(void)pdesc;
-	(void)ndesc;
+	/* Delegate to haconn for network communication */
+	haconn_desc(pdesc, ndesc);
 }
 
 /* Service events from polling */
 void raftconsensus_serve(struct pollfd *pdesc) {
-	/* TODO: Handle network events for Raft communication */
-	(void)pdesc;
+	/* Delegate to haconn for network communication */
+	haconn_serve(pdesc);
 }
 
 /* Display status information */
