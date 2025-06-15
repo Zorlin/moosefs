@@ -643,7 +643,10 @@ int raftconsensus_init(void) {
 	/* Register periodic tick - every 1 second */
 	main_time_register(1, 0, raftconsensus_tick_wrapper);
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_init: initialized with node_id=%"PRIu32" total_nodes=%"PRIu32" - registered tick function", 
+	/* Register for polling events */
+	main_poll_register(raftconsensus_desc, raftconsensus_serve);
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_init: initialized with node_id=%"PRIu32" total_nodes=%"PRIu32" - registered tick and polling", 
 	        local_node_id, total_nodes);
 	return 0;
 }
