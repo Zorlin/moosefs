@@ -26,11 +26,21 @@ int ha_mode_enabled(void) {
 int ha_detect_mode(void) {
     char *peers;
     
-    // Get node ID for HA cluster
-    ha_node_id = cfg_getnum("MFSHA_NODE_ID", 0);
+    // Get node ID for HA cluster - check environment first
+    char *node_id_env = getenv("MFSHA_NODE_ID");
+    if (node_id_env && *node_id_env) {
+        ha_node_id = (uint32_t)atol(node_id_env);
+    } else {
+        ha_node_id = cfg_getnum("MFSHA_NODE_ID", 0);
+    }
     
-    // Get peers configuration
-    peers = cfg_getstr("MFSHA_PEERS", "");
+    // Get peers configuration - check environment first
+    char *peers_env = getenv("MFSHA_PEERS");
+    if (peers_env && *peers_env) {
+        peers = strdup(peers_env);
+    } else {
+        peers = cfg_getstr("MFSHA_PEERS", "");
+    }
     
     // Enable HA mode if both node ID and peers are configured
     if (ha_node_id > 0 && peers && strlen(peers) > 0) {

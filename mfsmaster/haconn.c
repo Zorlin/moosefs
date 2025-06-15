@@ -681,8 +681,26 @@ int haconn_init(void) {
 	int sock;
 	
 	listen_port = cfg_getuint16("HA_CONN_LISTEN_PORT", 9430);
-	my_nodeid = cfg_getuint32("MFSHA_NODE_ID", 1);
-	peers_config = cfg_getstr("MFSHA_PEERS", "");
+	
+	/* Read node ID from environment first, then config file */
+	char *node_id_env = getenv("MFSHA_NODE_ID");
+	if (node_id_env && *node_id_env) {
+		my_nodeid = (uint32_t)atol(node_id_env);
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: using node ID %u from environment", my_nodeid);
+	} else {
+		my_nodeid = cfg_getuint32("MFSHA_NODE_ID", 1);
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: using node ID %u from config", my_nodeid);
+	}
+	
+	/* Read peers from environment first, then config file */
+	char *peers_env = getenv("MFSHA_PEERS");
+	if (peers_env && *peers_env) {
+		peers_config = strdup(peers_env);
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: using peers from environment: %s", peers_config);
+	} else {
+		peers_config = cfg_getstr("MFSHA_PEERS", "");
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: using peers from config: %s", peers_config);
+	}
 	
 	sock = tcpsocket();
 	if (sock < 0) {
