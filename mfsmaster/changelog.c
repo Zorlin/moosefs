@@ -281,9 +281,10 @@ void changelog(const char *format,...) {
 
 	/* In HA mode, only leaders can allocate versions and write changelogs */
 	if (ha_mode_enabled()) {
-		if (!raft_is_leader()) {
-			/* Followers should not write changelogs - they receive entries via Raft */
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"changelog: skipping write on follower - will receive via Raft");
+		/* Use cached leader lease check for performance - avoids lock contention */
+		if (!raft_has_valid_lease()) {
+			/* No valid lease - we're not the leader or lease expired */
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"changelog: skipping write - no valid lease, will receive via Raft");
 			return;
 		}
 		/* We are the leader - allocate version and replicate via Raft */

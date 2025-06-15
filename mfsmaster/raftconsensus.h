@@ -189,6 +189,9 @@ uint64_t raft_get_term(void);
 uint64_t raft_get_commit_index(void);
 uint64_t raft_get_current_version(void);
 
+/* Special operations */
+void raft_trigger_immediate_election_without_me(void);
+
 /* Persistence */
 int raft_save_state(void);
 int raft_load_state(void);

@@ -3644,6 +3644,29 @@ void matocsserv_serve(struct pollfd *pdesc) {
 		if (ns<0) {
 			mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"Master<->CS socket: accept error");
 		} else {
+			/* In HA mode, only the leader should accept new chunkserver connections */
+			if (ha_mode_enabled() && !raft_is_leader()) {
+				uint32_t leader_ip;
+				uint16_t leader_port;
+				
+				if (raftconsensus_get_leader_address(&leader_ip, &leader_port) == 0) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"redirecting chunkserver to leader at %s:%u",
+					        uinttoipstr(leader_ip), leader_port);
+					/* Send a redirect message and close the connection */
+					uint8_t redirect_msg[9];
+					uint8_t *ptr = redirect_msg;
+					put32bit(&ptr,MATOCS_HA_LEADER_REDIRECT);
+					put32bit(&ptr,5); /* length */
+					put8bit(&ptr,1); /* redirect flag */
+					put32bit(&ptr,leader_ip);
+					tcpwrite(ns,redirect_msg,9);
+				} else {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"no leader available to redirect chunkserver");
+				}
+				tcpclose(ns);
+				return;
+			}
+			
 			tcpnonblock(ns);
 			tcpnodelay(ns);
 			eptr = malloc(sizeof(matocsserventry));
@@ -3796,6 +3819,20 @@ void matocsserv_term(void) {
 	matocsserventry *eptr,*eaptr;
 	in_packetstruct *ipptr,*ipaptr;
 	out_packetstruct *opptr,*opaptr;
+	
+	/* In HA mode, if we're the leader, send disconnect signal to all chunkservers */
+	if (ha_mode_enabled() && raft_is_leader()) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"leader shutting down - sending disconnect signals to all chunkservers");
+		for (eptr = matocsservhead; eptr; eptr = eptr->next) {
+			if (eptr->mode == DATA && eptr->registered == REGISTERED) {
+				/* Send immediate disconnect signal */
+				uint8_t *buff = matocsserv_create_packet(eptr,MATOCS_HA_LEADER_SHUTDOWN,0);
+			}
+		}
+		/* Trigger immediate election excluding this node */
+		raft_trigger_immediate_election_without_me();
+	}
+	
 	mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"master <-> chunkservers module: closing %s:%s",ListenHost,ListenPort);
 	tcpclose(lsock);
 

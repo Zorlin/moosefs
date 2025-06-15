@@ -1784,12 +1784,13 @@ int meta_loadall(void) {
 uint64_t meta_version_inc(void) {
 	if (ha_mode_enabled()) {
 		/* In HA mode, only leaders can allocate versions */
-		if (!raft_is_leader()) {
-			/* Followers should not allocate versions - they receive operations via Raft */
+		/* Use cached leader lease check for performance - avoids lock contention */
+		if (!raft_has_valid_lease()) {
+			/* No valid lease - we're not the leader or lease expired */
 			static uint64_t last_warning = 0;
 			uint64_t now = (uint64_t)time(NULL);
 			if (now - last_warning > 10) {  /* Log warning at most every 10 seconds */
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"meta_version_inc: follower skipping version allocation (current version=%"PRIu64") - operations should come via Raft", metaversion);
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"meta_version_inc: no valid lease, skipping version allocation (current version=%"PRIu64") - operations should come via Raft", metaversion);
 				last_warning = now;
 			}
 			return metaversion; /* Return current version instead of 0 */

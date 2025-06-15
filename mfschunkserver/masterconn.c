@@ -1539,6 +1539,14 @@ void masterconn_gotpacket(masterconn *eptr,uint32_t type,const uint8_t *data,uin
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"MATOCS_HA_LEADER_REDIRECT - wrong size (%"PRIu32"/6)",length);
 			}
 			break;
+		case MATOCS_HA_LEADER_SHUTDOWN:
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"received leader shutdown notification from %s:%u - forcing reconnection",
+			        eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
+			/* Mark this connection for immediate reconnection */
+			eptr->mode = KILL;
+			/* Force all connections to reconnect to find new leader */
+			masterconn_forcereconnect();
+			break;
 		default:
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"got unknown message (type:%"PRIu32")",type);
 			eptr->mode = KILL;

@@ -2517,6 +2517,7 @@
 
 // 0x02D0
 #define MATOCS_HA_LEADER_REDIRECT (PROTO_BASE+720)
+#define MATOCS_HA_LEADER_SHUTDOWN (PROTO_BASE+721)
 // leader_ip:32 leader_port:16
 
 

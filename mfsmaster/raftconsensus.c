@@ -1014,6 +1014,28 @@ uint64_t raft_get_current_version(void) {
 	return version;
 }
 
+/* Trigger immediate election without current node */
+void raft_trigger_immediate_election_without_me(void) {
+	uint32_t i;
+	
+	pthread_mutex_lock(&raft_mutex);
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Triggering immediate election without node %u", local_node_id);
+	
+	/* Send a special message to all peers to start election immediately */
+	for (i = 0; i < raft_state.peer_count; i++) {
+		if (raft_state.peers[i].node_id != local_node_id) {
+			/* TODO: Send special election trigger message */
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Would send election trigger to node %u", raft_state.peers[i].node_id);
+		}
+	}
+	
+	/* Mark ourselves as not participating in next election */
+	raft_state.state = RAFT_STATE_FOLLOWER;
+	
+	pthread_mutex_unlock(&raft_mutex);
+}
+
 
 /* Check if we have minimum peers for quorum */
 static int raft_has_minimum_peers(void) {

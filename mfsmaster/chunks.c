@@ -4369,7 +4369,7 @@ static inline void chunk_mfr_state_check(chunk *c) {
 }
 
 void chunk_server_has_chunk(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint32_t version) {
-	uint8_t is_leader = !ha_mode_enabled() || raft_is_leader();
+	uint8_t is_leader = !ha_mode_enabled() || raft_has_valid_lease();
 	chunk *c;
 	slist *s;
 	uint8_t fix;
@@ -4600,7 +4600,7 @@ void chunk_lost(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint8_t report) {
 	}
 	if (c->lockedto<(uint32_t)main_time() && c->operation==NONE && c->slisthead==NULL && c->fhead==FLISTNULLINDX && chunk_counters_in_progress()==0 && csdb_have_all_servers()) {
 		/* In HA mode, only leaders should delete chunks */
-		if (!ha_mode_enabled() || raft_is_leader()) {
+		if (!ha_mode_enabled() || raft_has_valid_lease()) {
 			changelog("%"PRIu32"|CHUNKDEL(%"PRIu64",%"PRIu32")",main_time(),c->chunkid,c->version);
 			if (c->ondangerlist) {
 				chunk_priority_remove(c);
@@ -8674,7 +8674,7 @@ void chunk_jobs_main(void) {
 	uint32_t now;
 
 	/* Only leader should manage chunk jobs */
-	if (ha_mode_enabled() && !raft_is_leader()) {
+	if (ha_mode_enabled() && !raft_has_valid_lease()) {
 		return;
 	}
 
