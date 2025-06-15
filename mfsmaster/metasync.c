@@ -18,7 +18,6 @@
 #include "metasync.h"
 #include "metadata.h"
 #include "changelog_replay.h"
-#include "crdtstore.h"
 #include "haconn.h"
 #include "clocks.h"
 #include "mfslog.h"
@@ -234,18 +233,11 @@ static uint32_t get_ring_successor(void) {
 
 /* Process metadata entry from peer */
 static void metasync_process_entry(uint64_t version, const uint8_t *data, uint32_t length) {
-    /* Store in CRDT and replay */
-    crdt_store_t *store = crdtstore_get_main_store();
-    if (store != NULL) {
-        /* Store the changelog entry in CRDT */
-        if (crdtstore_put(store, version, CRDT_LWW_REGISTER, data, length) == 0) {
-            /* Replay the entry */
-            changelog_replay_entry(version, (const char *)data);
-            
-            mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "metasync: replayed entry v%"PRIu64" (%u bytes)", 
-                    version, length);
-        }
-    }
+    /* Directly replay the entry without CRDT */
+    changelog_replay_entry(version, (const char *)data);
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "metasync: replayed entry v%"PRIu64" (%u bytes)", 
+            version, length);
 }
 
 /* Handle incoming metadata sync messages */
@@ -294,36 +286,14 @@ void metasync_handle_message(uint32_t peerid, const uint8_t *data, uint32_t leng
             if (length >= 16) {
                 uint64_t from_version = get64bit(&ptr);
                 uint64_t to_version = get64bit(&ptr);
-                crdt_store_t *store = crdtstore_get_main_store();
-                uint64_t version;
-                uint32_t sent = 0;
-                
-                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: peer %u requesting range %"PRIu64"-%"PRIu64, 
+                /* TODO: Implement changelog-based range retrieval */
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: peer %u requesting range %"PRIu64"-%"PRIu64" (not implemented yet)", 
                         peerid, from_version, to_version);
                 
-                /* Send entries in the requested range */
-                for (version = from_version; version <= to_version && sent < 1000; version++) {
-                    crdt_entry_t *entry = crdtstore_get(store, version);
-                    if (entry && entry->value && entry->value_size > 0) {
-                        uint8_t msg[12 + entry->value_size];
-                        uint8_t *mptr = msg;
-                        
-                        put8bit(&mptr, METASYNC_ENTRY);
-                        put64bit(&mptr, version);
-                        put32bit(&mptr, entry->value_size);
-                        memcpy(mptr, entry->value, entry->value_size);
-                        
-                        haconn_send_meta_sync_to_peer(peerid, msg, 13 + entry->value_size);
-                        sent++;
-                    }
-                }
-                
-                /* Send done message */
+                /* Send done message for now */
                 uint8_t done_msg[1];
                 done_msg[0] = METASYNC_DONE;
                 haconn_send_meta_sync_to_peer(peerid, done_msg, 1);
-                
-                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: sent %u entries to peer %u", sent, peerid);
             }
             break;
         }
