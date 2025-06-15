@@ -42,6 +42,7 @@ static uint64_t lease_duration = 30;           /* 30 second lease */
 static void raft_send_request_vote(void);
 static void raft_send_append_entries(raft_peer_t *peer);
 static void raft_apply_committed_entries(void);
+static void raft_become_leader(void);
 void raftconsensus_tick_wrapper(void);
 
 /* Get random election timeout */
@@ -85,6 +86,10 @@ int raftconsensus_init(void) {
 	
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Raft consensus initialized: node_id=%u version=%"PRIu64,
 	        local_node_id, raft_state.current_version);
+	
+	/* Start election immediately */
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Starting initial election");
+	raft_start_election();
 	
 	return 0;
 }
@@ -268,10 +273,20 @@ void raft_start_election(void) {
 	raft_state.election_start = monotonic_useconds() / 1000;
 	raft_state.current_leader = 0;
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Starting election for term %"PRIu64, raft_state.current_term);
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Starting election for term %"PRIu64" (peer_count=%u)", 
+	        raft_state.current_term, raft_state.peer_count);
 	
 	/* Reset election timeout */
 	raft_state.election_timeout = get_election_timeout();
+	
+	/* Check if we have peers */
+	if (raft_state.peer_count == 0) {
+		/* No peers - become leader immediately */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "No peers configured - becoming leader immediately");
+		raft_become_leader();
+		pthread_mutex_unlock(&raft_mutex);
+		return;
+	}
 	
 	/* Send RequestVote to all peers */
 	raft_send_request_vote();
