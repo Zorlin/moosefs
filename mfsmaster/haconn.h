@@ -35,4 +35,7 @@ void haconn_send_meta_sync_to_peer(uint32_t peerid, const uint8_t *data, uint32_
 /* Send Raft message to all peers */
 void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length);
 
+/* Send changelog entry to all peers */
+void haconn_send_changelog_entry(uint64_t version, const uint8_t *data, uint32_t length);
+
 #endif

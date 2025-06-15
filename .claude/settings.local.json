@@ -18,7 +18,8 @@
       "Bash(./configure)",
       "Bash(git add:*)",
       "Bash(awk:*)",
-      "Bash(printf:*)"
+      "Bash(printf:*)",
+      "Bash(grep -n \"case MFSHA_META_SYNC:\" /home/wings/projects/moosefs/mfsmaster/haconn.c)"
     ]
   },
   "enableAllProjectMcpServers": true,

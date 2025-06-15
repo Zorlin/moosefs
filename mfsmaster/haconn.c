@@ -40,6 +40,7 @@
 #define MFSHA_GOSSIP_PONG     0x1005
 #define MFSHA_SHARD_MIGRATE   0x1006
 #define MFSHA_META_SYNC       0x1007
+#define MFSHA_CHANGELOG_ENTRY 0x8000  /* High number to avoid MooseFS protocol conflicts */
 
 /* Connection states */
 enum {
@@ -431,6 +432,34 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				metasync_handle_message(conn->peerid, data, length);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid metadata sync size");
+			}
+			break;
+			
+		case MFSHA_CHANGELOG_ENTRY:
+			/* Handle changelog entry from peer */
+			if (conn->mode != HACONN_CONNECTED) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: received changelog entry before handshake");
+				conn->mode = HACONN_KILL;
+				break;
+			}
+			if (length >= 12) { /* version:8 + length:4 + data */
+				const uint8_t *ptr = data;
+				uint64_t version = get64bit(&ptr);
+				uint32_t data_len = get32bit(&ptr);
+				
+				if (length == 12 + data_len) {
+					/* Forward to changelog replay system */
+					extern int changelog_replay_entry(uint64_t version, const char *entry);
+					changelog_replay_entry(version, (const char*)ptr);
+					
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received changelog v%"PRIu64" (%u bytes) from peer %u", 
+						version, data_len, conn->peerid);
+				} else {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid changelog entry size (expected %u, got %u)", 
+						12 + data_len, length);
+				}
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: changelog entry too small (%u < 12)", length);
 			}
 			break;
 			
@@ -1056,6 +1085,31 @@ void haconn_send_meta_sync_to_peer(uint32_t peerid, const uint8_t *data, uint32_
 				memcpy(ptr, data, length);
 			}
 			break;
+		}
+	}
+}
+
+/* Send changelog entry to all peers */
+void haconn_send_changelog_entry(uint64_t version, const uint8_t *data, uint32_t length) {
+	haconn_t *conn;
+	uint8_t *ptr;
+	uint32_t packet_size = 12 + length; /* version:8 + length:4 + data */
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_changelog_entry: broadcasting v%"PRIu64" (%u bytes)", version, length);
+	
+	for (conn = haconn_head; conn; conn = conn->next) {
+		if (conn->mode == HACONN_CONNECTED) {
+			ptr = haconn_createpacket(conn, MFSHA_CHANGELOG_ENTRY, packet_size);
+			if (ptr) {
+				put64bit(&ptr, version);
+				put32bit(&ptr, length);
+				if (length > 0) {
+					memcpy(ptr, data, length);
+				}
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_changelog_entry: sent to peer %u", conn->peerid);
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_send_changelog_entry: failed to create packet for peer %u", conn->peerid);
+			}
 		}
 	}
 }

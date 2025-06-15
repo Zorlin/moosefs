@@ -85,28 +85,17 @@ void gossip_info(FILE *fd) {
 	/* TODO: Display gossip message statistics */
 }
 
-/* CRDT synchronization via gossip */
+/* Changelog synchronization via gossip */
 void gossip_broadcast_changelog_entry(uint64_t version, const char *data, uint32_t data_len) {
-	uint8_t packet[8 + 4 + MAXLOGLINESIZE];
-	uint8_t *ptr;
-	uint32_t psize;
-	
-	/* Build packet: HACONN_CHANGELOG_ENTRY
-	 * version:64 length:32 data:length
-	 */
+	/* Validate changelog size */
 	if (data_len > MAXLOGLINESIZE) {
 		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "gossip_broadcast: changelog entry too large (%u bytes)", data_len);
 		return;
 	}
 	
-	ptr = packet;
-	put64bit(&ptr, version);
-	put32bit(&ptr, data_len);
-	memcpy(ptr, data, data_len);
-	psize = 8 + 4 + data_len;
+	/* Send changelog entry to all connected HA peers */
+	haconn_send_changelog_entry(version, (const uint8_t*)data, data_len);
 	
-	/* TODO: Implement proper changelog synchronization protocol */
-	/* For now, disable changelog broadcast to prevent CRDT corruption */
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "gossip_broadcast: changelog sync disabled (v%"PRIu64" %u bytes)", 
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "gossip_broadcast: sent changelog v%"PRIu64" (%u bytes) to HA peers", 
 	        version, data_len);
 }
