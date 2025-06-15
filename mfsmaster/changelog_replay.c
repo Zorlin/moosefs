@@ -59,15 +59,8 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
     if (version != highest_replayed_version + 1) {
         /* Handle version gaps */
         if (version > highest_replayed_version + 1) {
-            /* We have a gap - log it but continue if reasonable */
+            /* We have a gap - must request missing versions first */
             uint64_t gap = version - highest_replayed_version - 1;
-            if (gap > 10000) {
-                /* Gap is too large, likely a synchronization issue */
-                pthread_mutex_unlock(&replay_mutex);
-                mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "changelog_replay: version gap too large - expected %"PRIu64", got %"PRIu64" (gap=%"PRIu64")",
-                        highest_replayed_version + 1, version, gap);
-                return -1;
-            }
             mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: version gap detected - expected %"PRIu64", got %"PRIu64" (gap=%"PRIu64")",
                     highest_replayed_version + 1, version, gap);
             /* Request missing versions from gap */
@@ -77,6 +70,10 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
                     missing_start, missing_end);
             /* This will be handled by the HA module to fetch from peers */
             ha_request_missing_changelog_range(missing_start, missing_end);
+            /* Store this entry for later replay after gap is filled */
+            /* For now, we must reject it to avoid skipping versions */
+            pthread_mutex_unlock(&replay_mutex);
+            return 0;  /* Don't process out-of-order entries */
         } else {
             /* Version is older than expected, skip it */
             pthread_mutex_unlock(&replay_mutex);
