@@ -11,6 +11,7 @@
 #include "gossip.h"
 #include "gvc.h"
 #include "changelog_replay.h"
+#include "changelog.h"
 #include "metasync.h"
 #include <string.h>
 #include <stdlib.h>
@@ -152,7 +153,20 @@ int ha_metadata_sync(void) {
     return 0;
 }
 
+/* Callback for processing fetched changelog entries */
+static void ha_replay_changelog_entry(void *userdata, uint64_t version, uint8_t *data, uint32_t length) {
+    char entry[length + 1];
+    memcpy(entry, data, length);
+    entry[length] = '\0';
+    
+    /* Replay this entry through our changelog replay system */
+    changelog_replay_entry(version, entry);
+}
+
 void ha_request_missing_changelog_range(uint64_t start_version, uint64_t end_version) {
+    uint64_t min_version;
+    uint32_t count;
+    
     if (!ha_enabled) {
         return; /* No-op if HA mode is not enabled */
     }
@@ -160,11 +174,22 @@ void ha_request_missing_changelog_range(uint64_t start_version, uint64_t end_ver
     mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA: requesting missing changelog entries [%"PRIu64"-%"PRIu64"]", 
             start_version, end_version);
     
-    /* TODO: Implement protocol to request specific version ranges from peers */
-    /* For now, we'll rely on the periodic sync to eventually catch up */
-    /* This would involve:
-     * 1. Query all connected peers for who has these versions
-     * 2. Request the missing entries from the peer with the best connection
-     * 3. Replay them through changelog_replay_entry()
-     */
+    /* Check if we can serve these entries from our local changelog buffer */
+    min_version = changelog_get_minversion();
+    
+    if (start_version >= min_version) {
+        /* We can serve from local buffer */
+        uint32_t limit = (end_version - start_version + 1);
+        if (limit > 10000) {
+            limit = 10000; /* Process in chunks to avoid blocking */
+        }
+        
+        count = changelog_get_old_changes(start_version, ha_replay_changelog_entry, NULL, limit);
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA: replayed %u changelog entries from local buffer", count);
+    } else {
+        /* Need to request from peers - for now, trigger metadata resync */
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "HA: changelog entries before %"PRIu64" not available locally (min=%"PRIu64"), need peer sync", 
+                start_version, min_version);
+        /* TODO: Request from peers via haconn */
+    }
 }
