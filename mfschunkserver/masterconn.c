@@ -1519,6 +1519,7 @@ void masterconn_gotpacket(masterconn *eptr,uint32_t type,const uint8_t *data,uin
 				if (eptr->masterip != leader_ip || eptr->masterport != leader_port) {
 					eptr->masterip = leader_ip;
 					eptr->masterport = leader_port;
+					eptr->masteraddrvalid = 1; /* Already resolved, don't re-resolve */
 					/* Force reconnection to the leader */
 					eptr->mode = KILL;
 				}
@@ -2431,9 +2432,10 @@ int masterconn_init(void) {
 
 	wantexittime = 0.0;
 
-	// Initialize HA connections to all masters
-	if (masterconn_init_ha_connections() < 0) {
-		// Fall back to single connection if HA init fails
+	// Don't use multiple connections in HA mode - use single connection with redirection
+	// if (masterconn_init_ha_connections() < 0) {
+	if (1) { // Always use single connection mode
+		// Use single connection that can be redirected to leader
 		eptr = masterconnsingleton = malloc(sizeof(masterconn));
 		passert(eptr);
 
