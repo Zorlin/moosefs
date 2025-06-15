@@ -356,18 +356,20 @@ void raft_start_election(void) {
 	/* Reset election timeout */
 	raft_state.election_timeout = get_election_timeout();
 	
-	/* Calculate quorum needed */
-	uint32_t total_nodes = raft_state.peer_count + 1; /* peers + self */
-	uint32_t quorum_needed = (total_nodes / 2) + 1;
+	/* Calculate quorum needed based on configured cluster size */
+	uint32_t expected_cluster_size = cfg_getuint32("RAFT_CLUSTER_SIZE", 3);
+	uint32_t quorum_needed = (expected_cluster_size / 2) + 1;
 	
-	/* Check if we have quorum */
-	if (raft_state.peer_count < (quorum_needed - 1)) {
-		/* Not enough peers connected for quorum */
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Not enough peers for quorum - need %u peers, have %u", 
-		        quorum_needed - 1, raft_state.peer_count);
+	/* For elections, we need at least one other node to vote for us */
+	if (raft_state.peer_count == 0) {
+		/* No peers connected - cannot win election */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "No peers connected - cannot start election");
 		pthread_mutex_unlock(&raft_mutex);
 		return;
 	}
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Starting election: cluster_size=%u, connected_peers=%u, quorum_needed=%u",
+	        expected_cluster_size, raft_state.peer_count, quorum_needed);
 	
 	/* Send RequestVote to all peers */
 	raft_send_request_vote();
@@ -626,14 +628,15 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 			if (term == raft_state.current_term && vote_granted) {
 				raft_state.votes_received++;
 				
-				/* Check if we have majority */
-				uint32_t majority = (raft_state.peer_count + 1) / 2 + 1;
+				/* Check if we have majority based on configured cluster size */
+				uint32_t expected_cluster_size = cfg_getuint32("RAFT_CLUSTER_SIZE", 3);
+				uint32_t majority = (expected_cluster_size / 2) + 1;
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Vote granted from node %u - votes=%u/%u needed=%u",
-				        from_node, raft_state.votes_received, raft_state.peer_count + 1, majority);
+				        from_node, raft_state.votes_received, expected_cluster_size, majority);
 				
 				if (raft_state.votes_received >= majority) {
 					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Won election with %u votes out of %u nodes",
-					        raft_state.votes_received, raft_state.peer_count + 1);
+					        raft_state.votes_received, expected_cluster_size);
 					raft_become_leader();
 				}
 			} else {
