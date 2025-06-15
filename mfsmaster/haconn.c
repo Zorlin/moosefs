@@ -716,8 +716,8 @@ int haconn_init(void) {
 			char *colon = strchr(peer, ':');
 			if (colon) {
 				*colon = '\0';
-				/* Parse port from peer string */
-				uint16_t port = (uint16_t)strtoul(colon + 1, NULL, 10);
+				/* Always use HA port for peer connections, not the port from config */
+				uint16_t port = listen_port; /* Use same port we're listening on */
 				
 				/* Skip self based on node ID matching peer position */
 				int is_self = (peer_position == my_nodeid);
