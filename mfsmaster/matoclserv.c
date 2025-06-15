@@ -1477,7 +1477,7 @@ void matoclserv_info(matoclserventry *eptr,const uint8_t *data,uint32_t length) 
 		put8bit(&ptr,ha_state);    // workingstate
 		put8bit(&ptr,ha_state);    // nextstate
 		put8bit(&ptr,ha_state);    // stablestate
-		put8bit(&ptr,0);           // sync
+		put8bit(&ptr,1);           // sync (1 = synced, 0 = desynced)
 		put32bit(&ptr,raft_get_leader_ip());  // leaderip
 		put32bit(&ptr,0);          // changetime
 	} else {

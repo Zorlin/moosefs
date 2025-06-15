@@ -125,15 +125,21 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
         
         /* Also update the main metadata version to stay in sync */
         /* Only update if this is a newer version */
-        if (meta_version() < version) {
+        uint64_t current_meta_version = meta_version();
+        if (current_meta_version < version) {
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "changelog_replay: updating metadata version from %"PRIu64" to %"PRIu64, 
+                    current_meta_version, version);
             meta_set_version(version);
+        } else if (current_meta_version > version) {
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: metadata version %"PRIu64" is ahead of replayed version %"PRIu64, 
+                    current_meta_version, version);
         }
     }
     
     pthread_mutex_unlock(&replay_mutex);
     
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "changelog_replay: successfully replayed v%"PRIu64": %.100s%s", 
-            version, entry, strlen(entry) > 100 ? "..." : "");
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "changelog_replay: successfully replayed v%"PRIu64" (meta_version now %"PRIu64"): %.100s%s", 
+            version, meta_version(), entry, strlen(entry) > 100 ? "..." : "");
     
     return 0;
 }
