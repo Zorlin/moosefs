@@ -157,8 +157,8 @@ raft_shard_t* raft_create_shard(uint32_t shard_id, raft_peer_t *peers, uint32_t 
 	shards = shard;
 	pthread_mutex_unlock(&raft_mutex);
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_create_shard: created shard %"PRIu32" with %"PRIu32" peers", 
-	       shard_id, peer_count);
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_create_shard: created shard %"PRIu32" with %"PRIu32" peers, state=%d, last_heartbeat=0, election_timeout=%"PRIu64"ms", 
+	       shard_id, peer_count, shard->state, shard->election_timeout);
 	
 	return shard;
 }
@@ -287,11 +287,14 @@ void raft_start_election(raft_shard_t *shard) {
 	
 	/* Send RequestVote to all peers */
 	if (total_nodes > 1) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: broadcasting RequestVote for shard %"PRIu32, shard->shard_id);
 		haconn_send_raft_broadcast(msg, msg_size);
 	}
 	
 	/* Check if we already have majority (single node cluster) */
 	if (total_nodes == 1 || shard->votes_received > total_nodes / 2) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: immediate majority for shard %"PRIu32" (votes=%"PRIu32"/%"PRIu32")", 
+		       shard->shard_id, shard->votes_received, total_nodes);
 		raft_become_leader(shard);
 	}
 }
@@ -637,7 +640,7 @@ int raftconsensus_init(void) {
 	/* Register periodic tick */
 	main_time_register(0, 50000, raftconsensus_tick_wrapper); /* 50ms intervals */
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_init: initialized with node_id=%"PRIu32" total_nodes=%"PRIu32, 
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_init: initialized with node_id=%"PRIu32" total_nodes=%"PRIu32" - registered tick function", 
 	        local_node_id, total_nodes);
 	return 0;
 }
@@ -662,6 +665,10 @@ void raftconsensus_term(void) {
 
 /* Main loop tick function - wraps raft_tick() */
 void raftconsensus_tick_wrapper(void) {
+	static uint64_t wrapper_count = 0;
+	if ((wrapper_count++ % 200) == 0) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "raftconsensus_tick_wrapper: called %"PRIu64" times", wrapper_count);
+	}
 	raft_tick();
 }
 

@@ -247,7 +247,7 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				}
 				
 				conn->mode = HACONN_CONNECTED;
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: handshake complete with peer %u", conn->peerid);
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: handshake complete with peer %u (received request)", conn->peerid);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid handshake request");
 				conn->mode = HACONN_KILL;
@@ -261,7 +261,7 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				const uint8_t *ptr = data;
 				conn->peerid = get32bit(&ptr);
 				conn->mode = HACONN_CONNECTED;
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: handshake complete with peer %u", conn->peerid);
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: handshake complete with peer %u (received response)", conn->peerid);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid handshake response");
 				conn->mode = HACONN_KILL;
@@ -528,6 +528,7 @@ static void haconn_parse(haconn_t *conn) {
 	}
 	
 	if (conn->mode == HACONN_CONNECTED && conn->inputhead == NULL && conn->input_end) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_parse: killing connection due to input_end");
 		conn->mode = HACONN_KILL;
 	}
 }
@@ -598,17 +599,21 @@ int haconn_init(void) {
 						uint16_t resolved_port = 0;
 						if (tcpresolve(peer, NULL, &ip, &resolved_port, 0) >= 0 && ip > 0) {
 							tcpnonblock(csock);
-							if (tcpnumconnect(csock, ip, port) >= 0) {
+							int connect_result = tcpnumconnect(csock, ip, port);
+							if (connect_result >= 0 || errno == EINPROGRESS) {
+								/* Connection successful or in progress */
 								tcpnodelay(csock);
-								if (haconn_new(csock) != NULL) {
-									mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: initiated connection to peer %s:%u", peer, port);
+								haconn_t *new_conn = haconn_new(csock);
+								if (new_conn != NULL) {
+									new_conn->mode = HACONN_CONNECTING; /* Mark as connecting */
+									mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: initiated connection to peer %s:%u (fd=%d)", peer, port, csock);
 								} else {
 									tcpclose(csock);
 									mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to create connection structure for %s:%u", peer, port);
 								}
 							} else {
 								tcpclose(csock);
-								mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to connect to peer %s:%u", peer, port);
+								mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to connect to peer %s:%u - %s", peer, port, strerror(errno));
 							}
 						} else {
 							tcpclose(csock);
@@ -671,6 +676,9 @@ void haconn_desc(struct pollfd *pdesc, uint32_t *ndesc) {
 		if ((conn->mode == HACONN_CONNECTED || conn->mode == HACONN_HANDSHAKE) && conn->input_end == 0) {
 			pdesc[pos].events |= POLLIN;
 		}
+		if (conn->mode == HACONN_CONNECTING) {
+			pdesc[pos].events |= POLLOUT; /* Wait for connection completion */
+		}
 		if (conn->outputhead != NULL) {
 			pdesc[pos].events |= POLLOUT;
 		}
@@ -720,6 +728,21 @@ void haconn_serve(struct pollfd *pdesc) {
 		next_conn = conn->next;
 		
 		if (conn->pdescpos >= 0) {
+			/* Handle connection completion for outgoing connections */
+			if (conn->mode == HACONN_CONNECTING && (pdesc[conn->pdescpos].revents & POLLOUT)) {
+				int sockstatus = tcpgetstatus(conn->sock);
+				if (sockstatus == 0) {
+					/* Connection successful */
+					conn->mode = HACONN_HANDSHAKE;
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: connection established, sending handshake");
+					haconn_send_handshake(conn);
+				} else {
+					/* Connection failed */
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection failed - %s", strerror(sockstatus));
+					conn->mode = HACONN_KILL;
+				}
+			}
+			
 			if ((pdesc[conn->pdescpos].revents & POLLIN) && (conn->mode == HACONN_CONNECTED || conn->mode == HACONN_HANDSHAKE)) {
 				haconn_read(conn, now);
 			}
@@ -863,13 +886,21 @@ void haconn_send_meta_sync_to_peer(uint32_t peerid, const uint8_t *data, uint32_
 void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length) {
 	haconn_t *conn;
 	uint8_t *ptr;
+	uint32_t sent_count = 0;
+	uint32_t total_count = 0;
 	
 	for (conn = haconn_head; conn; conn = conn->next) {
+		total_count++;
 		if (conn->mode == HACONN_CONNECTED) {
 			ptr = haconn_createpacket(conn, MFSHA_RAFT_REQUEST, length);
 			if (ptr) {
 				memcpy(ptr, data, length);
+				sent_count++;
 			}
 		}
+	}
+	
+	if (sent_count == 0) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_send_raft_broadcast: no connected peers to send to (total connections=%"PRIu32")", total_count);
 	}
 }
