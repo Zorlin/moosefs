@@ -299,14 +299,27 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				conn->mode = HACONN_KILL;
 				break;
 			}
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received CRDT delta, length=%u from peer %u", length, conn->peerid);
 			if (length >= 32) {
 				crdt_entry_t *entry = NULL;
 				crdt_store_t *store = crdtstore_get_main_store();
+				
+				/* Debug: Log first few bytes of data */
+				if (length >= 8) {
+					const uint8_t *ptr = data;
+					uint64_t first_8_bytes = 0;
+					for (int i = 0; i < 8; i++) {
+						first_8_bytes = (first_8_bytes << 8) | ptr[i];
+					}
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: CRDT delta first 8 bytes: 0x%016"PRIx64, first_8_bytes);
+				}
 				
 				if (crdtstore_deserialize_entry(data, length, &entry) == 0 && entry != NULL) {
 					if (crdtstore_merge(store, entry) == 0) {
 						mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: applied CRDT delta for key %"PRIu64" from node %u", 
 							entry->key, conn->peerid);
+					} else {
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to merge CRDT delta for key %"PRIu64, entry->key);
 					}
 					/* Free the deserialized entry */
 					if (entry->value) {
@@ -314,10 +327,10 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 					}
 					free(entry);
 				} else {
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to deserialize CRDT delta");
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to deserialize CRDT delta (length=%u from peer %u)", length, conn->peerid);
 				}
 			} else {
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid CRDT delta size");
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid CRDT delta size (%u < 32) from peer %u", length, conn->peerid);
 			}
 			break;
 			

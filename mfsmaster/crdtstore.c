@@ -1018,14 +1018,19 @@ int crdtstore_serialize_entry(const crdt_entry_t *entry, uint8_t **data, uint32_
 	uint32_t total_size;
 	
 	if (entry == NULL || data == NULL || size == NULL) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "crdtstore serialize: NULL parameters");
 		return -1;
 	}
 	
 	/* Calculate total size */
-	total_size = 8 + 4 + 8 + 4 + 4 + 4 + entry->value_size;  /* key + type + timestamp + node_id + counter + value_size + value */
+	total_size = 8 + 4 + 8 + 4 + 4 + 4 + entry->value_size;  /* key + type + timestamp + node_id + counter + value_size + value = 36 + value_size */
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "crdtstore serialize: key=%"PRIu64" type=%u timestamp=%"PRIu64" node_id=%u counter=%u value_size=%u total_size=%u", 
+		entry->key, entry->type, entry->ts.timestamp, entry->ts.node_id, entry->ts.counter, entry->value_size, total_size);
 	
 	*data = malloc(total_size);
 	if (*data == NULL) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "crdtstore serialize: malloc failed for %u bytes", total_size);
 		return -1;
 	}
 	
@@ -1038,9 +1043,13 @@ int crdtstore_serialize_entry(const crdt_entry_t *entry, uint8_t **data, uint32_
 	put32bit(&ptr, entry->ts.node_id);
 	put32bit(&ptr, entry->ts.counter);
 	put32bit(&ptr, entry->value_size);
-	memcpy(ptr, entry->value, entry->value_size);
+	if (entry->value_size > 0 && entry->value != NULL) {
+		memcpy(ptr, entry->value, entry->value_size);
+	}
 	
 	*size = total_size;
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "crdtstore serialize: success, created %u bytes", total_size);
 	return 0;
 }
 
@@ -1049,12 +1058,19 @@ int crdtstore_deserialize_entry(const uint8_t *data, uint32_t size, crdt_entry_t
 	crdt_entry_t *new_entry;
 	uint32_t value_size;
 	
-	if (data == NULL || entry == NULL || size < 32) {
+	if (data == NULL || entry == NULL) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "crdtstore deserialize: NULL parameters (data=%p entry=%p)", data, entry);
+		return -1;
+	}
+	
+	if (size < 32) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "crdtstore deserialize: size too small (%u < 32)", size);
 		return -1;
 	}
 	
 	new_entry = malloc(sizeof(crdt_entry_t));
 	if (new_entry == NULL) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "crdtstore deserialize: malloc failed for crdt_entry_t");
 		return -1;
 	}
 	
@@ -1066,22 +1082,40 @@ int crdtstore_deserialize_entry(const uint8_t *data, uint32_t size, crdt_entry_t
 	new_entry->ts.counter = get32bit(&ptr);
 	value_size = get32bit(&ptr);
 	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "crdtstore deserialize: key=%"PRIu64" type=%u timestamp=%"PRIu64" node_id=%u counter=%u value_size=%u total_size=%u", 
+		new_entry->key, new_entry->type, new_entry->ts.timestamp, new_entry->ts.node_id, new_entry->ts.counter, value_size, size);
+	
+	/* Sanity check for value_size */
+	if (value_size > 10000000) { /* 10MB limit */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "crdtstore deserialize: value_size too large (%u > 10000000)", value_size);
+		free(new_entry);
+		return -1;
+	}
+	
 	if (size < 32 + value_size) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "crdtstore deserialize: insufficient data for value (%u < %u)", size, 32 + value_size);
 		free(new_entry);
 		return -1;
 	}
 	
 	new_entry->value_size = value_size;
-	new_entry->value = malloc(value_size);
-	if (new_entry->value == NULL) {
-		free(new_entry);
-		return -1;
+	
+	if (value_size > 0) {
+		new_entry->value = malloc(value_size);
+		if (new_entry->value == NULL) {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "crdtstore deserialize: malloc failed for %u bytes value", value_size);
+			free(new_entry);
+			return -1;
+		}
+		memcpy(new_entry->value, ptr, value_size);
+	} else {
+		new_entry->value = NULL;
 	}
 	
-	memcpy(new_entry->value, ptr, value_size);
 	new_entry->next = NULL;
 	
 	*entry = new_entry;
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "crdtstore deserialize: success");
 	return 0;
 }
 
