@@ -279,18 +279,31 @@ void changelog(const char *format,...) {
 	}
 
 
-	version = meta_version_inc();
-	if (version == 0) {
-		/* Version allocation failed - cannot write changelog */
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_ERR,"changelog: cannot write - no version available");
-		return;
-	}
-
-	/* In HA mode, replicate changelog entry through Raft */
-	if (ha_mode_enabled() && raft_is_leader()) {
+	/* In HA mode, only leaders can allocate versions and write changelogs */
+	if (ha_mode_enabled()) {
+		if (!raft_is_leader()) {
+			/* Followers should not write changelogs - they receive entries via Raft */
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"changelog: skipping write on follower - will receive via Raft");
+			return;
+		}
+		/* We are the leader - allocate version and replicate via Raft */
+		version = meta_version_inc();
+		if (version == 0) {
+			/* Version allocation failed - cannot write changelog */
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_ERR,"changelog: cannot write - no version available");
+			return;
+		}
 		/* Append changelog entry to Raft log for replication */
 		if (raft_append_entry(RAFT_ENTRY_CHANGELOG, (uint8_t*)printbuff, leng, version) < 0) {
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"changelog: failed to append to Raft log - version %"PRIu64, version);
+		}
+	} else {
+		/* Non-HA mode: allocate version normally */
+		version = meta_version_inc();
+		if (version == 0) {
+			/* Version allocation failed - cannot write changelog */
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_ERR,"changelog: cannot write - no version available");
+			return;
 		}
 	}
 
