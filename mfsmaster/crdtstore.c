@@ -310,6 +310,8 @@ int crdtstore_put(crdt_store_t *store, uint64_t key, crdt_type_t type,
 		uint32_t delta_size = 0;
 		
 		if (crdtstore_serialize_entry(new_entry, &delta_data, &delta_size) == 0 && delta_data != NULL) {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "crdtstore_put: broadcasting new entry key=%"PRIu64" value_size=%u delta_size=%u", 
+				new_entry->key, new_entry->value_size, delta_size);
 			haconn_send_crdt_delta(delta_data, delta_size);
 			free(delta_data);
 		} else {
@@ -1139,6 +1141,8 @@ static uint64_t chunkserver_key(uint32_t servip, uint16_t servport) {
 /* Put chunkserver information into CRDT store */
 int crdtstore_put_chunkserver(crdt_store_t *store, const mfs_chunkserver_t *cs) {
 	uint64_t key = chunkserver_key(cs->servip, cs->servport);
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "crdtstore_put_chunkserver: key=%"PRIu64" servip=%u servport=%u registered=%u size=%zu", 
+		key, cs->servip, cs->servport, cs->registered, sizeof(mfs_chunkserver_t));
 	return crdtstore_put(store, key, CRDT_LWW_REGISTER, cs, sizeof(mfs_chunkserver_t));
 }
 

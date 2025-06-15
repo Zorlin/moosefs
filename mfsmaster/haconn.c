@@ -301,10 +301,10 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 			}
 			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received CRDT delta, length=%u from peer %u", length, conn->peerid);
 			
-			/* Debug: Hex dump first 32 bytes */
+			/* Debug: Hex dump first 40 bytes to see header + some value data */
 			if (length > 0) {
-				char hex_dump[256];
-				uint32_t dump_len = (length > 32) ? 32 : length;
+				char hex_dump[512];
+				uint32_t dump_len = (length > 40) ? 40 : length;
 				char *hex_ptr = hex_dump;
 				for (uint32_t i = 0; i < dump_len; i++) {
 					sprintf(hex_ptr, "%02X ", data[i]);
@@ -312,6 +312,30 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				}
 				*hex_ptr = '\0';
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: CRDT delta hex dump (%u bytes): %s", dump_len, hex_dump);
+				
+				/* For packets that are suspiciously small (< 32 bytes), dump everything */
+				if (length < 32) {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: SUSPICIOUSLY SMALL CRDT delta (%u < 32 bytes) from peer %u", length, conn->peerid);
+				}
+				
+				/* If we have at least 32 bytes, parse the header manually for debugging */
+				if (length >= 32) {
+					const uint8_t *ptr = data;
+					uint64_t key = get64bit(&ptr);
+					uint32_t type = get32bit(&ptr);
+					uint64_t timestamp = get64bit(&ptr);
+					uint32_t node_id = get32bit(&ptr);
+					uint32_t counter = get32bit(&ptr);
+					uint32_t value_size = get32bit(&ptr);
+					
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: CRDT header: key=%"PRIu64" type=%u timestamp=%"PRIu64" node_id=%u counter=%u value_size=%u", 
+						key, type, timestamp, node_id, counter, value_size);
+					
+					if (value_size > 10000000) {
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "haconn: CORRUPT value_size=%u (0x%08X) in CRDT delta from peer %u", 
+							value_size, value_size, conn->peerid);
+					}
+				}
 			}
 			
 			if (length >= 32) {
@@ -917,6 +941,12 @@ void haconn_send_crdt_delta(const uint8_t *data, uint32_t length) {
 			ptr = haconn_createpacket(conn, MFSHA_CRDT_DELTA, length);
 			if (ptr) {
 				memcpy(ptr, data, length);
+				
+				/* Verify the data wasn't corrupted during packet creation */
+				if (memcmp(ptr, data, length) != 0) {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "haconn_send_crdt_delta: DATA CORRUPTION during packet creation for peer %u", conn->peerid);
+				}
+				
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_crdt_delta: sent %u bytes to peer %u", length, conn->peerid);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_send_crdt_delta: failed to create packet for peer %u", conn->peerid);
