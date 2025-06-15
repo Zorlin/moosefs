@@ -651,8 +651,10 @@ void raftconsensus_tick(double now) {
 			if (now_ms - raft_state.last_heartbeat > raft_state.election_timeout) {
 				/* Check if we have minimum peers before starting election */
 				if (!raft_has_minimum_peers()) {
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Election timeout but insufficient peers (%u connected, need at least %u)",
-					        raft_state.peer_count, cfg_getuint32("RAFT_MIN_PEERS", 2));
+					uint32_t expected_cluster_size = cfg_getuint32("RAFT_CLUSTER_SIZE", 3);
+					uint32_t majority = (expected_cluster_size / 2) + 1;
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Election timeout but no quorum (%u total nodes = self + %u peers, need %u for majority)",
+					        1 + raft_state.peer_count, raft_state.peer_count, majority);
 					/* Reset timeout to check again later */
 					raft_state.last_heartbeat = now_ms;
 					break;
@@ -727,9 +729,13 @@ int raft_add_peer(uint32_t node_id, const char *host, uint16_t port) {
 		peer = peer->next;
 	}
 	
-	/* Check if we're about to reach minimum peers for the first time */
-	if (raft_state.peer_count < cfg_getuint32("RAFT_MIN_PEERS", 2) &&
-	    raft_state.peer_count + 1 >= cfg_getuint32("RAFT_MIN_PEERS", 2)) {
+	/* Check if we're about to reach quorum for the first time */
+	uint32_t expected_cluster_size = cfg_getuint32("RAFT_CLUSTER_SIZE", 3);
+	uint32_t majority = (expected_cluster_size / 2) + 1;
+	uint32_t current_total = 1 + raft_state.peer_count;  /* self + peers */
+	uint32_t new_total = 1 + raft_state.peer_count + 1;  /* after adding this peer */
+	
+	if (current_total < majority && new_total >= majority) {
 		first_time_has_quorum = 1;
 	}
 	
@@ -758,8 +764,8 @@ int raft_add_peer(uint32_t node_id, const char *host, uint16_t port) {
 	/* If we just reached quorum and haven't had an election yet, trigger one */
 	if (first_time_has_quorum && raft_state.state == RAFT_STATE_FOLLOWER && 
 	    raft_state.current_term == 0) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Reached minimum peers (%u) - triggering first election",
-		        raft_state.peer_count);
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Reached quorum (%u total nodes = self + %u peers) - triggering first election",
+		        new_total, raft_state.peer_count);
 		/* Reset last heartbeat to trigger election in next tick */
 		raft_state.last_heartbeat = 0;
 	}
@@ -805,13 +811,23 @@ uint64_t raft_get_current_version(void) {
 /* Check if we have minimum peers for quorum */
 static int raft_has_minimum_peers(void) {
 	uint32_t min_peers;
+	uint32_t total_nodes;
 	
 	/* Already holding raft_mutex */
 	
-	/* Get minimum required peers from config (default 2 for 3-node cluster) */
-	min_peers = cfg_getuint32("RAFT_MIN_PEERS", 2);
+	/* Get minimum required peers from config (default: majority - 1) */
+	/* For 3-node cluster: need 2 total nodes (self + 1 peer) */
+	/* For 5-node cluster: need 3 total nodes (self + 2 peers) */
+	min_peers = cfg_getuint32("RAFT_MIN_PEERS", 1);  /* Default 1 peer for 3-node cluster */
 	
-	return (raft_state.peer_count >= min_peers);
+	/* Total nodes = self + connected peers */
+	total_nodes = 1 + raft_state.peer_count;
+	
+	/* Check if we have majority */
+	uint32_t expected_cluster_size = cfg_getuint32("RAFT_CLUSTER_SIZE", 3);
+	uint32_t majority = (expected_cluster_size / 2) + 1;
+	
+	return (total_nodes >= majority);
 }
 
 /* Get statistics */
