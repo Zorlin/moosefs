@@ -905,15 +905,27 @@ void haconn_send_raft_request(uint32_t peerid, const uint8_t *data, uint32_t len
 void haconn_send_raft_response(uint32_t peerid, const uint8_t *data, uint32_t length) {
 	haconn_t *conn;
 	uint8_t *ptr;
+	int found = 0;
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn_send_raft_response: looking for peer %u to send %u bytes", peerid, length);
 	
 	for (conn = haconn_head; conn; conn = conn->next) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn_send_raft_response: checking conn peerid=%u mode=%d", conn->peerid, conn->mode);
 		if (conn->mode == HACONN_CONNECTED && conn->peerid == peerid) {
 			ptr = haconn_createpacket(conn, MFSHA_RAFT_RESPONSE, length);
 			if (ptr) {
 				memcpy(ptr, data, length);
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn_send_raft_response: sent %u bytes to peer %u", length, peerid);
+				found = 1;
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "haconn_send_raft_response: failed to create packet for peer %u", peerid);
 			}
 			break;
 		}
+	}
+	
+	if (!found) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_send_raft_response: no connected peer found with id %u", peerid);
 	}
 }
 
