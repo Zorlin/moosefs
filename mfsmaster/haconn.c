@@ -1199,3 +1199,37 @@ void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length) {
 	}
 }
 
+/* Get leader connection information for client redirection */
+int haconn_get_leader_info(uint32_t leader_id, uint32_t *leader_ip, uint16_t *leader_port) {
+	haconn_t *conn;
+	
+	if (!leader_ip || !leader_port) {
+		return -1;
+	}
+	
+	/* Initialize to invalid values */
+	*leader_ip = 0;
+	*leader_port = 0;
+	
+	if (leader_id == my_nodeid) {
+		/* We are the leader - return our listen address */
+		/* For simplicity, return 0.0.0.0 which means client should use same IP it connected with */
+		*leader_ip = 0;
+		*leader_port = 9421; /* Standard MooseFS client port */
+		return 0;
+	}
+	
+	/* Find the connection to the leader peer */
+	for (conn = haconn_head; conn != NULL; conn = conn->next) {
+		if (conn->peerid == leader_id && conn->mode == 3) { /* mode 3 = connected */
+			*leader_ip = conn->peerip;
+			/* Convert HA port (9430) to client port (9421) */
+			*leader_port = 9421;
+			return 0;
+		}
+	}
+	
+	/* Leader not found in connections */
+	return -1;
+}
+
