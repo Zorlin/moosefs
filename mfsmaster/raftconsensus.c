@@ -186,7 +186,8 @@ uint64_t raft_get_next_version(void) {
 			        version, raft_state.leader_lease_expiry - now);
 		} else {
 			/* Lease expired - cannot allocate */
-			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Raft lease expired - cannot allocate version");
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Raft lease expired - cannot allocate version (now=%"PRIu64", lease_expiry=%"PRIu64")",
+			        now, raft_state.leader_lease_expiry);
 		}
 	} else {
 		/* Not leader */
@@ -347,8 +348,8 @@ static void raft_become_leader(void) {
 		raft_state.current_version = meta_ver;
 	}
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Became leader for term %"PRIu64" with lease until %"PRIu64" starting at version %"PRIu64,
-	        raft_state.current_term, raft_state.leader_lease_expiry, raft_state.current_version);
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Became leader for term %"PRIu64" with lease until %"PRIu64" (now=%"PRIu64", duration=%"PRIu64") starting at version %"PRIu64,
+	        raft_state.current_term, raft_state.leader_lease_expiry, now, raft_state.lease_duration, raft_state.current_version);
 	
 	/* Send initial heartbeats (we already hold the mutex) */
 	raft_send_heartbeats_internal();
