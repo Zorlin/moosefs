@@ -137,18 +137,15 @@ typedef struct masterconn {
 //	uint8_t accepted;
 } masterconn;
 
-static masterconn *masterconnections=NULL;  // Head of linked list
-static masterconn *masterconnsingleton=NULL;  // For backward compatibility (unused in HA mode)
-static uint32_t masterconn_count=0;
+static masterconn *masterconnsingleton=NULL;  // Single master connection
 
 // HA helper functions
 static masterconn *masterconn_get_primary(void) {
-	masterconn *eptr;
-	// Return first connected master
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		if (eptr->registerstate == REGISTERED && eptr->mode == DATA) {
-			return eptr;
-		}
+	// Return the single master connection
+	if (masterconnsingleton != NULL && 
+	    masterconnsingleton->registerstate == REGISTERED && 
+	    masterconnsingleton->mode == DATA) {
+		return masterconnsingleton;
 	}
 	return NULL;
 }
@@ -157,13 +154,14 @@ static masterconn *masterconn_get_primary(void) {
 static uint8_t* masterconn_create_attached_packet(masterconn *eptr,uint32_t type,uint32_t size);
 
 static void masterconn_broadcast_to_all(uint8_t *buff, uint32_t size) {
-	masterconn *eptr;
-	// Send to all connected masters
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		if (eptr->registerstate == REGISTERED && eptr->mode == DATA) {
-			// Note: buff and size are not correct params for this function
-			// This function needs to be fixed when used
-		}
+	// Send to the master
+	if (masterconnsingleton != NULL && 
+	    masterconnsingleton->registerstate == REGISTERED && 
+	    masterconnsingleton->mode == DATA) {
+		// Note: buff and size are not correct params for this function
+		// This function needs to be fixed when used
+		(void)buff; // Mark as used
+		(void)size; // Mark as used
 	}
 }
 static idlejob *idlejobs=NULL;
@@ -686,8 +684,9 @@ void masterconn_send_disconnect_command(void) {
 	masterconn *eptr;
 	uint8_t *buff;
 
-	// Send disconnect to all connected masters
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+	// Send disconnect to the master
+	eptr = masterconnsingleton;
+	if (eptr != NULL) {
 		if (eptr->registerstate==REGISTERED && eptr->mode==DATA && eptr->masterversion>=VERSION2INT(3,0,75)) {
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"sending unregister command ...");
 			buff = masterconn_create_attached_packet(eptr,CSTOMA_REGISTER,1);
@@ -710,8 +709,8 @@ void masterconn_check_hdd_space(void) {
 		uint32_t chunkcount,tdchunkcount;
 		hdd_get_space(&usedspace,&totalspace,&chunkcount,&tdusedspace,&tdtotalspace,&tdchunkcount);
 		
-		for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-			if ((eptr->registerstate==REGISTERED || eptr->registerstate==INPROGRESS) && eptr->mode==DATA) {
+		eptr = masterconnsingleton;
+		if (eptr != NULL && (eptr->registerstate==REGISTERED || eptr->registerstate==INPROGRESS) && eptr->mode==DATA) {
 				buff = masterconn_create_attached_packet(eptr,CSTOMA_SPACE,8+8+4+8+8+4);
 				put64bit(&buff,usedspace);
 				put64bit(&buff,totalspace);
@@ -719,7 +718,6 @@ void masterconn_check_hdd_space(void) {
 				put64bit(&buff,tdusedspace);
 				put64bit(&buff,tdtotalspace);
 				put32bit(&buff,tdchunkcount);
-			}
 		}
 	}
 }
@@ -732,14 +730,15 @@ void masterconn_check_hdd_reports(void) {
 
 	if (reconnectisneeded) {
 		masterconn_send_disconnect_command(); // closes connection
-		for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-			eptr->masteraddrvalid = 0;
+		if (masterconnsingleton != NULL) {
+			masterconnsingleton->masteraddrvalid = 0;
 		}
 		reconnectisneeded = 0;
 	}
 	
-	// Report to all registered masters
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+	// Report to the master
+	eptr = masterconnsingleton;
+	if (eptr != NULL) {
 		if (eptr->registerstate==REGISTERED && eptr->mode==DATA) {
 		errorcounter = hdd_errorcounter();
 		while (errorcounter) {
@@ -800,14 +799,9 @@ void masterconn_reportload(void) {
 	// Report load to all registered masters
 	job_get_load_and_hlstatus(&load,&hltosend);
 	
-	// First, count connections
-	int conn_count = 0;
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		conn_count++;
-	}
-	mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"reportload: found %d master connections",conn_count);
-	
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+	// Report to the single master connection
+	eptr = masterconnsingleton;
+	if (eptr != NULL) {
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"reportload: checking connection mode=%d, registerstate=%d, masterversion=%08X for %s:%u",
 		        eptr->mode,eptr->registerstate,eptr->masterversion,eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 		if (eptr->mode==DATA && eptr->masterversion>=VERSION2INT(1,6,28) && eptr->registerstate==REGISTERED) {
@@ -870,14 +864,13 @@ void masterconn_jobfinished(uint8_t status,void *bc) {
 	void *packet = busychunk_end(bc);
 	uint32_t packet_conncnt = ((out_packetstruct*)packet)->conncnt;
 
-	// Find the connection that matches this packet's connection counter
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		if (eptr->conncnt == packet_conncnt && eptr->mode == DATA) {
-			ptr = masterconn_get_packet_data(packet);
-			ptr[8]=status;
-			masterconn_attach_packet(eptr,packet);
-			return;
-		}
+	// Check if the packet belongs to our single connection
+	eptr = masterconnsingleton;
+	if (eptr != NULL && eptr->conncnt == packet_conncnt && eptr->mode == DATA) {
+		ptr = masterconn_get_packet_data(packet);
+		ptr[8]=status;
+		masterconn_attach_packet(eptr,packet);
+		return;
 	}
 	// No matching connection found, delete packet
 	masterconn_delete_packet(packet);
@@ -889,14 +882,13 @@ void masterconn_localsplitfinished(uint8_t status,void *bc) {
 	void *packet = busychunk_end(bc);
 	uint32_t packet_conncnt = ((out_packetstruct*)packet)->conncnt;
 
-	// Find the connection that matches this packet's connection counter
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		if (eptr->conncnt == packet_conncnt && eptr->mode == DATA) {
-			ptr = masterconn_get_packet_data(packet);
-			ptr[12]=status;
-			masterconn_attach_packet(eptr,packet);
-			return;
-		}
+	// Check if the packet belongs to our single connection
+	eptr = masterconnsingleton;
+	if (eptr != NULL && eptr->conncnt == packet_conncnt && eptr->mode == DATA) {
+		ptr = masterconn_get_packet_data(packet);
+		ptr[12]=status;
+		masterconn_attach_packet(eptr,packet);
+		return;
 	}
 	// No matching connection found, delete packet
 	masterconn_delete_packet(packet);
@@ -908,14 +900,13 @@ void masterconn_chunkopfinished(uint8_t status,void *bc) {
 	void *packet = busychunk_end(bc);
 	uint32_t packet_conncnt = ((out_packetstruct*)packet)->conncnt;
 
-	// Find the connection that matches this packet's connection counter
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		if (eptr->conncnt == packet_conncnt && eptr->mode == DATA) {
-			ptr = masterconn_get_packet_data(packet);
-			ptr[32]=status;
-			masterconn_attach_packet(eptr,packet);
-			return;
-		}
+	// Check if the packet belongs to our single connection
+	eptr = masterconnsingleton;
+	if (eptr != NULL && eptr->conncnt == packet_conncnt && eptr->mode == DATA) {
+		ptr = masterconn_get_packet_data(packet);
+		ptr[32]=status;
+		masterconn_attach_packet(eptr,packet);
+		return;
 	}
 	// No matching connection found, delete packet
 	masterconn_delete_packet(packet);
@@ -928,14 +919,13 @@ void masterconn_replicationfinished(uint8_t status,void *bc) {
 	uint32_t packet_conncnt = ((out_packetstruct*)packet)->conncnt;
 
 //	mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"job replication status: %"PRIu8,status);
-	// Find the connection that matches this packet's connection counter
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		if (eptr->conncnt == packet_conncnt && eptr->mode == DATA) {
-			ptr = masterconn_get_packet_data(packet);
-			ptr[12]=status;
-			masterconn_attach_packet(eptr,packet);
-			return;
-		}
+	// Check if the packet belongs to our single connection
+	eptr = masterconnsingleton;
+	if (eptr != NULL && eptr->conncnt == packet_conncnt && eptr->mode == DATA) {
+		ptr = masterconn_get_packet_data(packet);
+		ptr[12]=status;
+		masterconn_attach_packet(eptr,packet);
+		return;
 	}
 	// No matching connection found, delete packet
 	masterconn_delete_packet(packet);
@@ -1677,13 +1667,16 @@ static int masterconn_init_ha_connections(void) {
 		eptr->node_id = i;  // Use index as node ID for now
 		eptr->hostname = strdup(MasterHost);
 		
-		// Add to linked list
-		eptr->next = masterconnections;
-		masterconnections = eptr;
-		masterconn_count++;
-		
-		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA: added master connection %d (%u.%u.%u.%u:%u)", 
-			i, (master_ips[i]>>24)&0xFF, (master_ips[i]>>16)&0xFF, (master_ips[i]>>8)&0xFF, master_ips[i]&0xFF, master_port);
+		// Set as singleton
+		if (masterconnsingleton == NULL) {
+			masterconnsingleton = eptr;
+			mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA: set singleton master connection (%u.%u.%u.%u:%u)", 
+				(master_ips[i]>>24)&0xFF, (master_ips[i]>>16)&0xFF, (master_ips[i]>>8)&0xFF, master_ips[i]&0xFF, master_port);
+		} else {
+			// Already have a connection, free this one
+			free(eptr);
+			mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"HA: already have a master connection, ignoring additional master %d", i);
+		}
 	}
 	
 	free(master_ips);
@@ -1998,28 +1991,8 @@ void masterconn_desc(struct pollfd *pdesc,uint32_t *ndesc) {
 	uint32_t pos = *ndesc;
 	masterconn *eptr;
 
-	// Handle multiple connections
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		eptr->pdescpos = -1;
-		if (eptr->mode==FREE || eptr->sock<0) {
-			continue;
-		}
-		pdesc[pos].events = 0;
-		if (eptr->mode==DATA && eptr->input_end==0) {
-			pdesc[pos].events |= POLLIN;
-		}
-		if (((eptr->mode==DATA || eptr->mode==CLOSE) && eptr->outputhead!=NULL) || eptr->mode==CONNECTING) {
-			pdesc[pos].events |= POLLOUT;
-		}
-		if (pdesc[pos].events!=0) {
-			pdesc[pos].fd = eptr->sock;
-			eptr->pdescpos = pos;
-			pos++;
-		}
-	}
-	
-	// Fall back to singleton if no HA connections
-	if (masterconnections == NULL && masterconnsingleton != NULL) {
+	// Handle single connection
+	if (masterconnsingleton != NULL) {
 		eptr = masterconnsingleton;
 		eptr->pdescpos = -1;
 		if (eptr->mode!=FREE && eptr->sock>=0) {
@@ -2046,52 +2019,13 @@ void masterconn_disconnection_check(void) {
 	out_packetstruct *opptr,*opaptr;
 	idlejob *ij,*nij;
 
-	// Handle multiple connections
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+	// Handle single connection
+	if (masterconnsingleton != NULL) {
+			eptr = masterconnsingleton;
 		if (eptr->mode==KILL || (eptr->mode==CLOSE && eptr->outputhead==NULL)) {
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_NOTICE,"closing connection with master %u.%u.%u.%u:%u",
 				(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
 				(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
-			tcpclose(eptr->sock);
-			eptr->sock = -1;
-			if (eptr->input_packet) {
-				free(eptr->input_packet);
-			}
-			ipptr = eptr->inputhead;
-			while (ipptr) {
-				ipaptr = ipptr;
-				ipptr = ipptr->next;
-				free(ipaptr);
-			}
-			opptr = eptr->outputhead;
-			while (opptr) {
-				opaptr = opptr;
-				opptr = opptr->next;
-				free(opaptr);
-			}
-			// Note: idlejobs handling might need per-connection management
-			if (eptr->registerstate == INPROGRESS) {
-				hdd_get_chunks_end();
-			}
-			if (eptr->registerstate == UNREGISTERED && eptr->mode==KILL) {
-				eptr->masteraddrvalid = 0;
-			}
-			/* Reset registration state so we'll re-register when reconnected */
-			if (eptr->registerstate == REGISTERED) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"resetting registration state for reconnection to master %u.%u.%u.%u:%u",
-					(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
-					(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
-				eptr->registerstate = UNREGISTERED;
-			}
-			eptr->mode = FREE;
-		}
-	}
-	
-	// Fall back to singleton if no HA connections
-	if (masterconnections == NULL && masterconnsingleton != NULL) {
-		eptr = masterconnsingleton;
-		if (eptr->mode==KILL || (eptr->mode==CLOSE && eptr->outputhead==NULL)) {
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_NOTICE,"closing connection with master");
 			tcpclose(eptr->sock);
 			eptr->sock = -1;
 			if (eptr->input_packet) {
@@ -2123,6 +2057,13 @@ void masterconn_disconnection_check(void) {
 			if (eptr->registerstate == UNREGISTERED && eptr->mode==KILL) {
 				eptr->masteraddrvalid = 0;
 			}
+			/* Reset registration state so we'll re-register when reconnected */
+			if (eptr->registerstate == REGISTERED) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"resetting registration state for reconnection to master %u.%u.%u.%u:%u",
+					(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
+					(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
+				eptr->registerstate = UNREGISTERED;
+			}
 			eptr->mode = FREE;
 		}
 	}
@@ -2134,8 +2075,9 @@ void masterconn_serve(struct pollfd *pdesc) {
 
 	now = monotonic_seconds();
 
-	// Handle multiple connections
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+	// Handle single connection
+	if (masterconnsingleton != NULL) {
+		eptr = masterconnsingleton;
 		if (eptr->mode==CONNECTING) {
 			if (eptr->sock>=0 && eptr->pdescpos>=0 && (pdesc[eptr->pdescpos].revents & (POLLOUT | POLLHUP | POLLERR))) {
 				masterconn_connecttest(eptr);
@@ -2178,45 +2120,6 @@ void masterconn_serve(struct pollfd *pdesc) {
 		}
 	}
 	
-	// Fall back to singleton if no HA connections
-	if (masterconnections == NULL && masterconnsingleton != NULL) {
-		eptr = masterconnsingleton;
-		if (eptr->mode==CONNECTING) {
-			if (eptr->sock>=0 && eptr->pdescpos>=0 && (pdesc[eptr->pdescpos].revents & (POLLOUT | POLLHUP | POLLERR))) {
-				masterconn_connecttest(eptr);
-			} else if (eptr->conntime+1.0 < now) {
-				masterconn_connecttimeout(eptr);
-			}
-		} else {
-			if (eptr->pdescpos>=0) {
-				if ((pdesc[eptr->pdescpos].revents & (POLLERR|POLLIN))==POLLIN && eptr->mode==DATA) {
-					masterconn_read(eptr,now);
-				}
-				if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: connection closed by master");
-					eptr->input_end = 1;
-				}
-				masterconn_parse(eptr);
-			}
-			if ((eptr->mode==DATA || eptr->mode==CLOSE) && eptr->lastwrite+1.0<now && eptr->outputhead==NULL) {
-				masterconn_create_attached_packet(eptr,ANTOAN_NOP,0);
-			}
-			if (eptr->pdescpos>=0) {
-				if ((((pdesc[eptr->pdescpos].events & POLLOUT)==0 && (eptr->outputhead)) || (pdesc[eptr->pdescpos].revents & POLLOUT)) && (eptr->mode==DATA || eptr->mode==CLOSE)) {
-					masterconn_write(eptr,now);
-				}
-			}
-			if (eptr->mode==DATA && eptr->lastread+eptr->timeout<now) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: connection timed out");
-				eptr->mode = KILL;
-			}
-		}
-		if (eptr->mode==CLOSE && wantexittime>0.0 && wantexittime+FORCE_DISCONNECTION_TO < now) {
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"masterconn: unregistering timed out");
-			eptr->mode = KILL;
-		}
-	}
-	
 	masterconn_disconnection_check();
 }
 
@@ -2227,19 +2130,10 @@ void masterconn_forcereconnect(void) {
 void masterconn_reconnect(void) {
 	masterconn *eptr;
 	
-	// Reconnect all masters in HA mode
-	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		if (eptr->mode==FREE && wantexittime==0.0) {
-			masterconn_initconnect(eptr);
-		}
-	}
-	
-	// Fall back to singleton if no HA connections
-	if (masterconnections == NULL && masterconnsingleton != NULL) {
-		eptr = masterconnsingleton;
-		if (eptr->mode==FREE && wantexittime==0.0) {
-			masterconn_initconnect(eptr);
-		}
+	// Reconnect single master connection
+	eptr = masterconnsingleton;
+	if (eptr != NULL && eptr->mode==FREE && wantexittime==0.0) {
+		masterconn_initconnect(eptr);
 	}
 }
 
