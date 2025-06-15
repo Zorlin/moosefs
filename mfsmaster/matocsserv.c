@@ -3650,23 +3650,28 @@ void matocsserv_serve(struct pollfd *pdesc) {
 				uint32_t leader_ip;
 				uint16_t leader_port;
 				
-				if (leader_id != 0 && haconn_get_leader_info(leader_id, &leader_ip, &leader_port) == 0) {
-					char stripbuf[32];
-					univmakestrip(stripbuf, leader_ip);
-					/* Use chunkserver port (9422) instead of client port */
-					leader_port = 9422;
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"redirecting chunkserver to leader at %s:%u",
-					        stripbuf, leader_port);
-					/* Send a redirect message and close the connection */
-					uint8_t redirect_msg[14];
-					uint8_t *ptr = redirect_msg;
-					put32bit(&ptr,MATOCS_HA_LEADER_REDIRECT);
-					put32bit(&ptr,6); /* length: 4 bytes IP + 2 bytes port */
-					put32bit(&ptr,leader_ip);
-					put16bit(&ptr,leader_port);
-					tcptowrite(ns,redirect_msg,14,1000,1000);
+				if (leader_id != 0) {
+					int ret = haconn_get_leader_info(leader_id, &leader_ip, &leader_port);
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"haconn_get_leader_info returned %d, leader_id=%u, leader_ip=%u, leader_port=%u",
+					        ret, leader_id, leader_ip, leader_port);
+					if (ret == 0 && leader_ip != 0) {
+						char stripbuf[32];
+						univmakestrip(stripbuf, leader_ip);
+						mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"redirecting chunkserver to leader at %s:%u",
+						        stripbuf, leader_port);
+						/* Send a redirect message and close the connection */
+						uint8_t redirect_msg[14];
+						uint8_t *ptr = redirect_msg;
+						put32bit(&ptr,MATOCS_HA_LEADER_REDIRECT);
+						put32bit(&ptr,6); /* length: 4 bytes IP + 2 bytes port */
+						put32bit(&ptr,leader_ip);
+						put16bit(&ptr,leader_port);
+						tcptowrite(ns,redirect_msg,14,1000,1000);
+					} else {
+						mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"leader IP not resolved (ret=%d, ip=%u), cannot redirect chunkserver", ret, leader_ip);
+					}
 				} else {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"no leader available to redirect chunkserver");
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"no leader available to redirect chunkserver (leader_id=0)");
 				}
 				tcpclose(ns);
 				return;

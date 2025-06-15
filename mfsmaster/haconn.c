@@ -1341,7 +1341,7 @@ int haconn_get_leader_info(uint32_t leader_id, uint32_t *leader_ip, uint16_t *le
 		/* We are the leader - this should not happen if we're redirecting! */
 		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_get_leader_info: asked for leader info but we ARE the leader (leader_id=%u, my_nodeid=%u)", leader_id, my_nodeid);
 		*leader_ip = 0;
-		*leader_port = 9421; /* Standard MooseFS client port */
+		*leader_port = 9420; /* Standard MooseFS chunkserver port */
 		return 0;
 	}
 	
@@ -1378,7 +1378,7 @@ int haconn_get_leader_info(uint32_t leader_id, uint32_t *leader_ip, uint16_t *le
 				uint16_t resolved_port = 0;
 				if (tcpresolve(peer, NULL, &ip, &resolved_port, 0) >= 0 && ip > 0) {
 					*leader_ip = ip;
-					*leader_port = 9421; /* Standard MooseFS client port */
+					*leader_port = 9420; /* Standard MooseFS chunkserver port */
 					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn_get_leader_info: resolved leader %u from config: %s -> %u.%u.%u.%u:%u", 
 					        leader_id, peer, (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, 
 					        (ip >> 8) & 0xFF, ip & 0xFF, *leader_port);

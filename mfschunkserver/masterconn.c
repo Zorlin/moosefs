@@ -1527,14 +1527,16 @@ void masterconn_gotpacket(masterconn *eptr,uint32_t type,const uint8_t *data,uin
 			masterconn_chunk_status(eptr,data,length);
 			break;
 		case MATOCS_HA_LEADER_REDIRECT:
-			/* In multi-master mode, we ignore redirects and maintain connections to all masters */
+			/* Handle leader redirect - disconnect and reconnect to leader only */
 			if (length == 6) {
 				uint32_t leader_ip = get32bit(&data);
 				uint16_t leader_port = get16bit(&data);
 				char stripbuf[32];
 				
 				univmakestrip(stripbuf, leader_ip);
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"got leader redirect to %s:%u (ignoring - maintaining connection to all masters)", stripbuf, leader_port);
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"got leader redirect to %s:%u - disconnecting to reconnect to leader", stripbuf, leader_port);
+				/* Close this connection - it will reconnect to the leader */
+				eptr->mode = KILL;
 			} else {
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"MATOCS_HA_LEADER_REDIRECT - wrong size (%"PRIu32"/6)",length);
 			}
@@ -2458,9 +2460,8 @@ int masterconn_init(void) {
 
 	wantexittime = 0.0;
 
-	// Initialize HA connections to all masters
-	if (masterconn_init_ha_connections() < 0) {
-		// Fall back to single connection if HA init fails
+	// Connect to leader only - don't use HA multi-connection mode
+	{
 		eptr = masterconnsingleton = malloc(sizeof(masterconn));
 		passert(eptr);
 
