@@ -1361,6 +1361,7 @@ int fs_connect(uint8_t oninit,struct connect_args_t *cargs) {
 	char pwdgrpbuff[16384];
 #endif
 	static uint32_t trycnt=0;
+	static uint32_t redirect_count=0;
 
 	if (fs_resolve(oninit,cargs->bindhostname,cargs->masterhostname,cargs->masterportname)<0) {
 		return -1;
@@ -1559,6 +1560,18 @@ int fs_connect(uint8_t oninit,struct connect_args_t *cargs) {
 		i = get32bit(&rptr);
 		if (i==MATOCL_HA_LEADER_REDIRECT) {
 			/* Handle HA leader redirection */
+			redirect_count++;
+			if (redirect_count > 5) {
+				if (oninit) {
+					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"too many redirects (%u) - giving up",redirect_count);
+				} else {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"too many redirects (%u) - giving up",redirect_count);
+				}
+				tcpclose(fd);
+				fd=-1;
+				free(regbuff);
+				return -1;
+			}
 			i = get32bit(&rptr);  /* Get data length */
 			if (i != 6) {
 				if (oninit) {
@@ -1955,6 +1968,9 @@ int fs_connect(uint8_t oninit,struct connect_args_t *cargs) {
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Connected to HA cluster with %"PRIu32" nodes, %"PRIu32" shards", 
 			ha_cluster.node_count, ha_cluster.shard_count);
 	}
+	
+	/* Reset redirect counter on successful connection */
+	redirect_count = 0;
 	
 	return 0;
 }
