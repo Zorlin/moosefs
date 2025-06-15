@@ -800,6 +800,8 @@ void masterconn_reportload(void) {
 	// Report load to all registered masters
 	job_get_load_and_hlstatus(&load,&hltosend);
 	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"reportload: checking connection mode=%d, registerstate=%d for %s:%u",
+		        eptr->mode,eptr->registerstate,eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 		if (eptr->mode==DATA && eptr->masterversion>=VERSION2INT(1,6,28) && eptr->registerstate==REGISTERED) {
 			if (eptr->masterversion>=VERSION2INT(3,0,7)) {
 				rebalance = hdd_is_rebalance_on();
