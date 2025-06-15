@@ -53,6 +53,8 @@ typedef struct raft_peer {
 	struct raft_peer *next;
 } raft_peer_t;
 
+#include "crdtstore.h" /* For hlc_timestamp_t */
+
 /* Raft shard context */
 typedef struct raft_shard {
 	uint32_t shard_id;    /* Shard identifier */
@@ -62,9 +64,15 @@ typedef struct raft_shard {
 	uint64_t commit_index; /* Index of highest log entry known to be committed */
 	uint64_t last_applied; /* Index of highest log entry applied to state machine */
 	
+	/* Leader state with HLC-based leases */
+	uint32_t current_leader;   /* Current leader node ID */
+	hlc_timestamp_t leader_lease_hlc; /* HLC when leader lease expires */
+	uint64_t leader_lease_epoch; /* Leader lease epoch for validation */
+	
 	/* Leader state */
 	raft_peer_t *peers;   /* List of peers in this shard */
 	uint32_t peer_count;  /* Number of peers */
+	uint32_t votes_received; /* Votes received in current election */
 	
 	/* Log */
 	raft_log_entry_t *log_head; /* First log entry */
@@ -152,6 +160,7 @@ int raft_commit_entries(uint32_t shard_id, uint64_t commit_index);
 /* Message handling */
 int raft_handle_message(const raft_message_t *msg, uint32_t from_node);
 int raft_send_message(const raft_message_t *msg, uint32_t to_node);
+void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint32_t length);
 
 /* Timing and maintenance */
 void raft_tick(void); /* Called periodically to handle timeouts */

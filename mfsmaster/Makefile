@@ -131,7 +131,8 @@ am_mfsmaster_OBJECTS = mfsmaster-itree.$(OBJEXT) \
 	mfsmaster-hamaster.$(OBJEXT) mfsmaster-shardmgr.$(OBJEXT) \
 	mfsmaster-haconn.$(OBJEXT) mfsmaster-crdtstore.$(OBJEXT) \
 	mfsmaster-raftconsensus.$(OBJEXT) mfsmaster-gossip.$(OBJEXT) \
-	mfsmaster-gvc.$(OBJEXT) ../mfscommon/mfsmaster-main.$(OBJEXT) \
+	mfsmaster-gvc.$(OBJEXT) mfsmaster-metasync.$(OBJEXT) \
+	../mfscommon/mfsmaster-main.$(OBJEXT) \
 	../mfscommon/mfsmaster-processname.$(OBJEXT) \
 	../mfscommon/mfsmaster-cfg.$(OBJEXT) \
 	../mfscommon/mfsmaster-random.$(OBJEXT) \
@@ -276,6 +277,7 @@ am__depfiles_remade = ../mfscommon/$(DEPDIR)/mfsmaster-cfg.Po \
 	./$(DEPDIR)/mfsmaster-matomlserv.Po \
 	./$(DEPDIR)/mfsmaster-merger.Po \
 	./$(DEPDIR)/mfsmaster-metadata.Po \
+	./$(DEPDIR)/mfsmaster-metasync.Po \
 	./$(DEPDIR)/mfsmaster-missinglog.Po \
 	./$(DEPDIR)/mfsmaster-multilan.Po \
 	./$(DEPDIR)/mfsmaster-openfiles.Po \
@@ -557,6 +559,7 @@ mfsmaster_SOURCES = \
 	raftconsensus.c raftconsensus.h \
 	gossip.c gossip.h \
 	gvc.c gvc.h \
+	metasync.c metasync.h \
 	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \
@@ -888,6 +891,7 @@ include ./$(DEPDIR)/mfsmaster-matocsserv.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-matomlserv.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-merger.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-metadata.Po # am--include-marker
+include ./$(DEPDIR)/mfsmaster-metasync.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-missinglog.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-multilan.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-openfiles.Po # am--include-marker
@@ -1493,6 +1497,20 @@ mfsmaster-gvc.obj: gvc.c
 #	$(AM_V_CC)source='gvc.c' object='mfsmaster-gvc.obj' libtool=no \
 #	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
 #	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-gvc.obj `if test -f 'gvc.c'; then $(CYGPATH_W) 'gvc.c'; else $(CYGPATH_W) '$(srcdir)/gvc.c'; fi`
+
+mfsmaster-metasync.o: metasync.c
+	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-metasync.o -MD -MP -MF $(DEPDIR)/mfsmaster-metasync.Tpo -c -o mfsmaster-metasync.o `test -f 'metasync.c' || echo '$(srcdir)/'`metasync.c
+	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-metasync.Tpo $(DEPDIR)/mfsmaster-metasync.Po
+#	$(AM_V_CC)source='metasync.c' object='mfsmaster-metasync.o' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
+#	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-metasync.o `test -f 'metasync.c' || echo '$(srcdir)/'`metasync.c
+
+mfsmaster-metasync.obj: metasync.c
+	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-metasync.obj -MD -MP -MF $(DEPDIR)/mfsmaster-metasync.Tpo -c -o mfsmaster-metasync.obj `if test -f 'metasync.c'; then $(CYGPATH_W) 'metasync.c'; else $(CYGPATH_W) '$(srcdir)/metasync.c'; fi`
+	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-metasync.Tpo $(DEPDIR)/mfsmaster-metasync.Po
+#	$(AM_V_CC)source='metasync.c' object='mfsmaster-metasync.obj' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
+#	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-metasync.obj `if test -f 'metasync.c'; then $(CYGPATH_W) 'metasync.c'; else $(CYGPATH_W) '$(srcdir)/metasync.c'; fi`
 
 ../mfscommon/mfsmaster-main.o: ../mfscommon/main.c
 	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT ../mfscommon/mfsmaster-main.o -MD -MP -MF ../mfscommon/$(DEPDIR)/mfsmaster-main.Tpo -c -o ../mfscommon/mfsmaster-main.o `test -f '../mfscommon/main.c' || echo '$(srcdir)/'`../mfscommon/main.c
@@ -2104,6 +2122,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-matomlserv.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-merger.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-metadata.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-metasync.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-missinglog.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-multilan.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-openfiles.Po
@@ -2219,6 +2238,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-matomlserv.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-merger.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-metadata.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-metasync.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-missinglog.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-multilan.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-openfiles.Po

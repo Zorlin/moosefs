@@ -303,9 +303,13 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 			
 		case MFSHA_RAFT_REQUEST:
 			/* Forward to Raft consensus */
-			if (length >= 4) {
-				/* TODO: Call raftconsensus_handle_request(conn->peerid, data, length) */
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received Raft request, %u bytes", length);
+			if (conn->mode != HACONN_CONNECTED) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: received Raft request before handshake");
+				conn->mode = HACONN_KILL;
+				break;
+			}
+			if (length >= 1) {
+				raft_handle_incoming_message(conn->peerid, data, length);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid Raft request size");
 			}
@@ -809,6 +813,21 @@ void haconn_send_meta_sync_to_peer(uint32_t peerid, const uint8_t *data, uint32_
 				memcpy(ptr, data, length);
 			}
 			break;
+		}
+	}
+}
+
+/* Send Raft message to all peers */
+void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length) {
+	haconn_t *conn;
+	uint8_t *ptr;
+	
+	for (conn = haconn_head; conn; conn = conn->next) {
+		if (conn->mode == HACONN_CONNECTED) {
+			ptr = haconn_createpacket(conn, MFSHA_RAFT_REQUEST, length);
+			if (ptr) {
+				memcpy(ptr, data, length);
+			}
 		}
 	}
 }
