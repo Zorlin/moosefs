@@ -1688,13 +1688,17 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_HA_LEADER_REDIRECT, 6);
 				put32bit(&ptr, leader_ip);      /* Leader IP address */
 				put16bit(&ptr, leader_port);    /* Leader port */
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client redirection: leader is at %u.%u.%u.%u:%u", 
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client redirection: leader is at %u.%u.%u.%u:%u - closing connection", 
 				        (leader_ip >> 24) & 0xFF, (leader_ip >> 16) & 0xFF, (leader_ip >> 8) & 0xFF, leader_ip & 0xFF, leader_port);
+				/* Close connection after redirect to force client to reconnect to leader */
+				eptr->mode = FINISH;
 			} else {
 				/* Send standard rejection response */
 				uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_FUSE_REGISTER, 1);
 				put8bit(&ptr, MFS_ERROR_EPERM); /* Operation not permitted - no leader info */
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"Client redirection: leader info not available (leader_id=%u)", leader_id);
+				/* Close connection since we can't provide service */
+				eptr->mode = KILL;
 			}
 			return;
 		}
