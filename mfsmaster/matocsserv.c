@@ -3655,13 +3655,13 @@ void matocsserv_serve(struct pollfd *pdesc) {
 					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"redirecting chunkserver to leader at %s:%u",
 					        stripbuf, leader_port);
 					/* Send a redirect message and close the connection */
-					uint8_t redirect_msg[13];
+					uint8_t redirect_msg[14];
 					uint8_t *ptr = redirect_msg;
 					put32bit(&ptr,MATOCS_HA_LEADER_REDIRECT);
-					put32bit(&ptr,5); /* length: 1 byte flag + 4 bytes IP */
-					put8bit(&ptr,1); /* redirect flag */
+					put32bit(&ptr,6); /* length: 4 bytes IP + 2 bytes port */
 					put32bit(&ptr,leader_ip);
-					tcptowrite(ns,redirect_msg,13,1000,1000);
+					put16bit(&ptr,leader_port);
+					tcptowrite(ns,redirect_msg,14,1000,1000);
 				} else {
 					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"no leader available to redirect chunkserver");
 				}
