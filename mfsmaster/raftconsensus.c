@@ -315,6 +315,18 @@ void raft_send_heartbeats(void) {
 	pthread_mutex_unlock(&raft_mutex);
 }
 
+/* Internal version that assumes mutex is already held */
+static void raft_send_heartbeats_internal(void) {
+	raft_peer_t *peer;
+	
+	/* Send empty AppendEntries as heartbeat */
+	peer = raft_state.peers;
+	while (peer) {
+		raft_send_append_entries(peer);
+		peer = peer->next;
+	}
+}
+
 /* Become leader */
 static void raft_become_leader(void) {
 	uint64_t now;
@@ -338,8 +350,8 @@ static void raft_become_leader(void) {
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Became leader for term %"PRIu64" with lease until %"PRIu64" starting at version %"PRIu64,
 	        raft_state.current_term, raft_state.leader_lease_expiry, raft_state.current_version);
 	
-	/* Send initial heartbeats */
-	raft_send_heartbeats();
+	/* Send initial heartbeats (we already hold the mutex) */
+	raft_send_heartbeats_internal();
 }
 
 /* Send RequestVote RPC */
