@@ -175,7 +175,7 @@ uint64_t raft_get_next_version(void) {
 	pthread_mutex_lock(&raft_mutex);
 	
 	if (raft_state.state == RAFT_STATE_LEADER) {
-		now = monotonic_seconds();
+		now = (uint64_t)time(NULL);
 		
 		/* Check lease validity */
 		if (now < raft_state.leader_lease_expiry) {
@@ -347,8 +347,8 @@ static void raft_become_leader(void) {
 	raft_state.current_leader = local_node_id;
 	raft_state.votes_received = 0;
 	
-	/* Set leader lease */
-	now = monotonic_seconds();
+	/* Set leader lease using real UNIX time */
+	now = (uint64_t)time(NULL);
 	raft_state.leader_lease_expiry = now + raft_state.lease_duration;
 	
 	/* Ensure version is up to date */
@@ -715,9 +715,9 @@ void raftconsensus_tick(double now) {
 				return;
 			}
 			
-			/* Check lease expiry */
+			/* Check lease expiry using real UNIX time */
 			{
-				uint64_t now_seconds = monotonic_seconds();
+				uint64_t now_seconds = (uint64_t)time(NULL);
 				if (now_seconds > raft_state.leader_lease_expiry - 5) {
 					/* Lease about to expire - renew by sending heartbeats */
 					raft_state.leader_lease_expiry = now_seconds + raft_state.lease_duration;
@@ -905,7 +905,7 @@ void raftconsensus_info(FILE *fd) {
 	fprintf(fd, "peer_count: %u\n", raft_state.peer_count);
 	
 	if (raft_state.state == RAFT_STATE_LEADER) {
-		now = monotonic_seconds();
+		now = (uint64_t)time(NULL);
 		fprintf(fd, "lease_valid: %s\n", now < raft_state.leader_lease_expiry ? "yes" : "no");
 		fprintf(fd, "lease_remaining: %"PRId64"s\n", 
 		        (int64_t)(raft_state.leader_lease_expiry - now));
