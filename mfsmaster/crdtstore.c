@@ -856,7 +856,21 @@ int crdt_cluster_sync_attempt(void) {
 	ha_node_id_env = getenv("MFSHA_NODE_ID");
 	ha_peers_env = getenv("MFSHA_PEERS");
 	
-	if (ha_node_id_env == NULL || ha_peers_env == NULL) {
+	/* If not in environment, check config */
+	if (ha_node_id_env == NULL) {
+		uint32_t node_id = cfg_getnum("MFSHA_NODE_ID", 0);
+		if (node_id > 0) {
+			static char node_id_str[32];
+			snprintf(node_id_str, sizeof(node_id_str), "%u", node_id);
+			ha_node_id_env = node_id_str;
+		}
+	}
+	
+	if (ha_peers_env == NULL) {
+		ha_peers_env = cfg_getstr("MFSHA_PEERS", NULL);
+	}
+	
+	if (ha_node_id_env == NULL || ha_peers_env == NULL || strlen(ha_peers_env) == 0) {
 		mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_NOTICE, "HA mode not configured (MFSHA_NODE_ID or MFSHA_PEERS not set) - starting with empty metadata");
 		return -1;
 	}
