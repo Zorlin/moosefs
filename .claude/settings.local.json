@@ -20,7 +20,8 @@
       "Bash(awk:*)",
       "Bash(printf:*)",
       "Bash(grep -n \"case MFSHA_META_SYNC:\" /home/wings/projects/moosefs/mfsmaster/haconn.c)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(ssh:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

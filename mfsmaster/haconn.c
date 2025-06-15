@@ -745,6 +745,15 @@ int haconn_init(void) {
 				        peer, port, peer_position, is_self, my_nodeid);
 				
 				if (!is_self) {
+					/* Tie-breaker: only connect to peers with higher node IDs to avoid duplicate connections */
+					if (peer_position < my_nodeid) {
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: skipping connection to peer %s (position %u < my_nodeid %u) - will accept incoming instead", 
+						        peer, peer_position, my_nodeid);
+						peer = strtok(NULL, ",");
+						peer_position++;
+						continue;
+					}
+					
 					/* Connect to peer */
 					int csock = tcpsocket();
 					if (csock >= 0) {
