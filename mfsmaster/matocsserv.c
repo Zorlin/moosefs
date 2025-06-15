@@ -2569,6 +2569,9 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 	uint16_t csid;
 	double us,ts;
 
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"CSTOMA_REGISTER received from %s:%u, registered=%d, length=%u",
+	        eptr->servdesc ? eptr->servdesc : "unknown", eptr->servport, eptr->registered, length);
+
 	if ((length&1)==0) {
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"CSTOMA_REGISTER: chunkserver is too old");
 		eptr->mode = KILL;
@@ -2578,7 +2581,10 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 		rversion = get8bit(&data);
 
 		if (eptr->registered==REGISTERED && rversion!=63) {
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"got register message from registered chunkserver !!!");
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"got register message from registered chunkserver !!! (servip=%u.%u.%u.%u:%u, servdesc=%s)",
+			        (eptr->servip >> 24) & 0xFF, (eptr->servip >> 16) & 0xFF, 
+			        (eptr->servip >> 8) & 0xFF, eptr->servip & 0xFF, eptr->servport,
+			        eptr->servdesc ? eptr->servdesc : "NULL");
 			eptr->mode = KILL;
 			return;
 		}
@@ -3101,6 +3107,11 @@ void matocsserv_gotpacket(matocsserventry *eptr,uint32_t type,const uint8_t *dat
 		eptr->mode = KILL;
 		return;
 	}
+	if (type == CSTOMA_REGISTER || type == CSTOMA_SPACE) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"received message type=%u from %s, registered=%d", 
+		        type, eptr->servdesc ? eptr->servdesc : "unknown", eptr->registered);
+	}
+	
 	switch (type) {
 		case ANTOAN_NOP:
 			break;
@@ -3441,7 +3452,8 @@ void matocsserv_disconnection_loop(void) {
 			double us,ts;
 			us = (double)(eptr->usedspace)/(double)(1024*1024*1024);
 			ts = (double)(eptr->totalspace)/(double)(1024*1024*1024);
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s disconnected, usedspace: %"PRIu64" (%.2lf GiB), totalspace: %"PRIu64" (%.2lf GiB)",eptr->servdesc,eptr->usedspace,us,eptr->totalspace,ts);
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s disconnected (mode=KILL), registered=%d, usedspace: %"PRIu64" (%.2lf GiB), totalspace: %"PRIu64" (%.2lf GiB)",
+			        eptr->servdesc, eptr->registered, eptr->usedspace,us,eptr->totalspace,ts);
 			matocsserv_replication_disconnected(eptr);
 			matocsserv_operation_disconnected(eptr);
 			if (eptr->csid!=MAXCSCOUNT) {
