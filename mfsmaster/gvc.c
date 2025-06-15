@@ -183,6 +183,9 @@ uint64_t gvc_get_next_version(void) {
     /* Use next available version */
     version = gvc_state.local_version_next++;
     
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "GVC allocated version %"PRIu64" (range [%"PRIu64"-%"PRIu64"])",
+            version, gvc_state.local_version_start, gvc_state.local_version_end);
+    
     /* Check if we should prefetch more versions */
     remaining = gvc_state.local_version_end - gvc_state.local_version_next;
     if (remaining < gvc_state.prefetch_threshold) {
@@ -289,11 +292,54 @@ static int gvc_request_version_range(uint32_t count) {
         return 0;
     }
     
-    /* Not the leader - cannot allocate versions */
+    /* Not the leader - request versions from the leader */
     uint32_t leader = raft_get_leader(0);
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "GVC not allocating versions - not leader (leader is node %u)", leader);
     
-    return -1;
+    /* If no leader, try to elect one */
+    if (leader == 0) {
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC: no leader for shard 0, need election");
+        /* For now, use local allocation with node-specific offset to avoid conflicts */
+        uint32_t node_id = ha_get_node_id();
+        uint64_t base_version = gvc_state.current_version > 0 ? gvc_state.current_version : meta_version();
+        
+        /* Emergency allocation: use high offset to avoid conflicts */
+        range.start = base_version + (1000000 * node_id);
+        range.end = range.start + count;
+        
+        gvc_state.local_version_start = range.start;
+        gvc_state.local_version_end = range.end;
+        gvc_state.local_version_next = range.start;
+        
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC: emergency allocation [%"PRIu64"-%"PRIu64"] for node %u",
+                range.start, range.end, node_id);
+        return 0;
+    }
+    
+    /* Check if we have any versions left from previous allocation */
+    if (gvc_state.local_version_next < gvc_state.local_version_end) {
+        /* We still have versions from a previous allocation, use them */
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "GVC using previously allocated versions [%"PRIu64"-%"PRIu64"]",
+                gvc_state.local_version_next, gvc_state.local_version_end);
+        return 0; /* Success - we have versions to use */
+    }
+    
+    /* TODO: Request version range from leader via RPC */
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "GVC: need to request versions from leader (node %u)", leader);
+    
+    /* For now, use emergency allocation */
+    uint32_t node_id = ha_get_node_id();
+    uint64_t base_version = gvc_state.current_version > 0 ? gvc_state.current_version : meta_version();
+    
+    range.start = base_version + (10000 * node_id);
+    range.end = range.start + count;
+    
+    gvc_state.local_version_start = range.start;
+    gvc_state.local_version_end = range.end;
+    gvc_state.local_version_next = range.start;
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC: temporary allocation [%"PRIu64"-%"PRIu64"] for node %u",
+            range.start, range.end, node_id);
+    return 0;
 }
 
 /* Calculate adaptive batch size based on usage patterns */

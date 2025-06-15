@@ -1769,9 +1769,11 @@ uint64_t meta_version_inc(void) {
 			metaversion = new_version;
 			return metaversion;
 		}
-		/* Fall back to local increment if GVC fails */
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"GVC version allocation failed, using local increment");
+		/* This should never happen with emergency allocation */
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_ERR,"meta_version_inc: GVC returned 0, critical error");
+		abort(); /* This is a critical error */
 	}
+	/* Non-HA mode: simple increment */
 	return metaversion++;
 }
 
