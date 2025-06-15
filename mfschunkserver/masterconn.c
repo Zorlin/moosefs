@@ -2461,33 +2461,22 @@ int masterconn_init(void) {
 	wantexittime = 0.0;
 
 	// Connect to leader only - don't use HA multi-connection mode
-	{
-		eptr = masterconnsingleton = malloc(sizeof(masterconn));
-		passert(eptr);
+	eptr = masterconnsingleton = malloc(sizeof(masterconn));
+	passert(eptr);
 
-		eptr->masteraddrvalid = 0;
-		eptr->masterversion = 0;
-		eptr->mode = FREE;
-		eptr->pdescpos = -1;
-		eptr->conncnt = 0;
-		if (Timeout>0) {
-			eptr->timeout = Timeout;
-		} else {
-			eptr->timeout = 10;
-		}
-
-		if (masterconn_initconnect(eptr)<0) {
-			return -1;
-		}
+	eptr->masteraddrvalid = 0;
+	eptr->masterversion = 0;
+	eptr->mode = FREE;
+	eptr->pdescpos = -1;
+	eptr->conncnt = 0;
+	if (Timeout>0) {
+		eptr->timeout = Timeout;
 	} else {
-		// Initialize connections for all discovered masters
-		for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-			if (masterconn_initconnect(eptr) < 0) {
-				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"HA: failed to connect to master %u.%u.%u.%u:%u",
-					(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
-					(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
-			}
-		}
+		eptr->timeout = 10;
+	}
+
+	if (masterconn_initconnect(eptr)<0) {
+		return -1;
 	}
 
 	main_time_register(REPORT_LOAD_FREQ,0,masterconn_reportload);
