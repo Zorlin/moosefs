@@ -1079,6 +1079,16 @@ void csdb_sync_from_crdt(void) {
 		return;
 	}
 	
+	/* FIXME: Temporarily disable CRDT sync for chunkservers on followers
+	 * The current implementation causes followers to wipe their csdb because
+	 * chunkserver registrations are not being written to CRDT.
+	 * This is a temporary fix - the proper solution is to implement
+	 * CRDT synchronization for chunkserver registrations.
+	 */
+	if (!raft_is_leader()) {
+		return;
+	}
+	
 	store = crdtstore_get_main_store();
 	if (store == NULL) {
 		return;

@@ -4388,12 +4388,16 @@ void chunk_server_has_chunk(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint32_t
 		if (chunk_remove_disconnected_chunks(c)) {
 			c = NULL;
 		}
+		if (!is_leader && c != NULL) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"chunk_server_has_chunk: follower processing existing chunk %016"PRIX64" from cs %s (csid=%u)",
+			        chunkid, matocsserv_getstrip(cstab[csid].ptr), csid);
+		}
 	}
 
 	if (c==NULL) {
 		/* In HA mode, only leaders should create new chunks for nonexistent chunks reported by chunkservers */
 		if (!is_leader) {
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"chunk_server_has_chunk: follower skipping chunk creation for nonexistent %016"PRIX64" - will be handled by leader",chunkid);
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"chunk_server_has_chunk: follower skipping nonexistent chunk %016"PRIX64" - no chunk to update",chunkid);
 			return;
 		}
 #ifndef MFSDEBUG
