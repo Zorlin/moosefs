@@ -746,6 +746,19 @@ void raftconsensus_tick(double now) {
 			break;
 			
 		case RAFT_STATE_LEADER:
+			/* Check if lease has expired - if so, step down */
+			{
+				uint64_t now_seconds = (uint64_t)time(NULL);
+				if (now_seconds > raft_state.leader_lease_expiry) {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Leader lease expired (now=%"PRIu64", expiry=%"PRIu64") - stepping down",
+					        now_seconds, raft_state.leader_lease_expiry);
+					raft_state.state = RAFT_STATE_FOLLOWER;
+					raft_state.current_leader = 0;
+					raft_state.last_heartbeat = now_ms; /* Reset election timeout */
+					break;
+				}
+			}
+			
 			/* Send periodic heartbeats */
 			if (now_ms - raft_state.last_heartbeat > raft_state.heartbeat_timeout) {
 				raft_state.last_heartbeat = now_ms;
