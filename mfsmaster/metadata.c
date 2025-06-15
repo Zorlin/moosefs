@@ -1554,14 +1554,32 @@ int meta_loadall(void) {
 			}
 			
 			/* Attempt CRDT cluster sync if HA mode is enabled */
-			if (getenv("MFSHA_NODE_ID") != NULL && getenv("MFSHA_PEERS") != NULL) {
-				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA mode detected - attempting cluster sync as fallback...");
+			uint32_t ha_node_id = 0;
+			char *ha_peers = NULL;
+			
+			/* Check environment variables first */
+			if (getenv("MFSHA_NODE_ID") != NULL) {
+				ha_node_id = atoi(getenv("MFSHA_NODE_ID"));
+			} else {
+				/* Check config file */
+				ha_node_id = cfg_getnum("MFSHA_NODE_ID", 0);
+			}
+			
+			if (getenv("MFSHA_PEERS") != NULL) {
+				ha_peers = getenv("MFSHA_PEERS");
+			} else {
+				ha_peers = cfg_getstr("MFSHA_PEERS", NULL);
+			}
+			
+			if (ha_node_id > 0 && ha_peers != NULL && strlen(ha_peers) > 0) {
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA mode detected (node_id=%u, peers=%s) - attempting cluster sync as fallback...", ha_node_id, ha_peers);
 				if (crdt_cluster_sync_attempt() == 0) {
 					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"cluster sync successful - metadata loaded from peer");
 					return 0;
 				}
 			} else {
-				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA mode not enabled (MFSHA_NODE_ID or MFSHA_PEERS not set) - cannot attempt cluster sync");
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA mode not enabled (MFSHA_NODE_ID=%u, MFSHA_PEERS=%s) - cannot attempt cluster sync", 
+				        ha_node_id, ha_peers ? ha_peers : "NULL");
 			}
 			
 			return -1;

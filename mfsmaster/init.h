@@ -68,6 +68,7 @@ struct {
 	{bgsaver_init,"bgsaver"},
 	{glob_cache_init,"glob engine"},
 	{multilan_init,"multilan map"},
+	{ha_initialize,"HA cluster support"}, // has to be before 'meta_init' for cluster sync
 	{changelog_init,"change log"},
 	{missing_log_init,"missing chunks/files log"}, // has to be before 'fs_init'
 	{dcm_init,"data cache manager"}, // has to be before 'fs_init' and 'matoclserv_init'
@@ -78,7 +79,6 @@ struct {
 	{matomlserv_init,"communication with metalogger"},
 	{matocsserv_init,"communication with chunkserver"},
 	{matoclserv_init,"communication with clients"},
-	{ha_initialize,"HA cluster support"},
 	{(runfn)0,"****"}
 },LateRunTab[]={
 	{(runfn)0,"****"}
