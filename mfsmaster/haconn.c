@@ -762,6 +762,9 @@ int haconn_init(void) {
 								tcpnodelay(csock);
 								haconn_t *new_conn = haconn_new_outgoing(csock);
 								if (new_conn != NULL) {
+									/* Set peer IP address for outgoing connection */
+									new_conn->peerip = ip;
+									new_conn->peerport = port;
 									mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: initiated connection to peer %s:%u (fd=%d)", peer, port, csock);
 								} else {
 									tcpclose(csock);
@@ -884,11 +887,23 @@ void haconn_serve(struct pollfd *pdesc) {
 			if (newfd >= 0) {
 				tcpnonblock(newfd);
 				tcpnodelay(newfd);
-				if (haconn_new_incoming(newfd) == NULL) {
+				haconn_t *new_conn = haconn_new_incoming(newfd);
+				if (new_conn == NULL) {
 					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: cannot accept connection");
 					tcpclose(newfd);
 				} else {
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: accepted new connection");
+					/* Get peer IP address for incoming connection */
+					uint32_t peer_ip = 0;
+					uint16_t peer_port = 0;
+					if (tcpgetpeer(newfd, &peer_ip, &peer_port) == 0) {
+						new_conn->peerip = peer_ip;
+						new_conn->peerport = peer_port;
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: accepted new connection from %u.%u.%u.%u:%u", 
+						        (peer_ip >> 24) & 0xFF, (peer_ip >> 16) & 0xFF, 
+						        (peer_ip >> 8) & 0xFF, peer_ip & 0xFF, peer_port);
+					} else {
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: accepted new connection (could not get peer address)");
+					}
 				}
 			}
 		}
