@@ -1769,9 +1769,9 @@ uint64_t meta_version_inc(void) {
 			metaversion = new_version;
 			return metaversion;
 		}
-		/* This should never happen with emergency allocation */
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_ERR,"meta_version_inc: GVC returned 0, critical error");
-		abort(); /* This is a critical error */
+		/* Cannot allocate version - operation must fail */
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"meta_version_inc: cannot allocate version - no GVC leader");
+		return 0;
 	}
 	/* Non-HA mode: simple increment */
 	return metaversion++;

@@ -26,6 +26,7 @@
 #include "clocks.h"
 #include "hashfn.h"
 #include "raftconsensus.h"
+#include "haconn.h"
 
 /* GVC state structure */
 typedef struct {
@@ -295,24 +296,10 @@ static int gvc_request_version_range(uint32_t count) {
     /* Not the leader - request versions from the leader */
     uint32_t leader = raft_get_leader(0);
     
-    /* If no leader, try to elect one */
+    /* If no leader, we cannot allocate versions */
     if (leader == 0) {
-        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC: no leader for shard 0, need election");
-        /* For now, use local allocation with node-specific offset to avoid conflicts */
-        uint32_t node_id = ha_get_node_id();
-        uint64_t base_version = gvc_state.current_version > 0 ? gvc_state.current_version : meta_version();
-        
-        /* Emergency allocation: use high offset to avoid conflicts */
-        range.start = base_version + (1000000 * node_id);
-        range.end = range.start + count;
-        
-        gvc_state.local_version_start = range.start;
-        gvc_state.local_version_end = range.end;
-        gvc_state.local_version_next = range.start;
-        
-        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC: emergency allocation [%"PRIu64"-%"PRIu64"] for node %u",
-                range.start, range.end, node_id);
-        return 0;
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "GVC: no leader for shard 0 - cannot allocate versions");
+        return -1;
     }
     
     /* Check if we have any versions left from previous allocation */
@@ -323,23 +310,24 @@ static int gvc_request_version_range(uint32_t count) {
         return 0; /* Success - we have versions to use */
     }
     
-    /* TODO: Request version range from leader via RPC */
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "GVC: need to request versions from leader (node %u)", leader);
+    /* Request version range from leader via RPC */
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "GVC: requesting versions from leader (node %u)", leader);
     
-    /* For now, use emergency allocation */
-    uint32_t node_id = ha_get_node_id();
-    uint64_t base_version = gvc_state.current_version > 0 ? gvc_state.current_version : meta_version();
+    uint64_t start_version = 0;
+    if (haconn_request_version_range(leader, count, &start_version) == 0) {
+        /* Success - update our local range */
+        gvc_state.local_version_start = start_version;
+        gvc_state.local_version_end = start_version + count;
+        gvc_state.local_version_next = start_version;
+        
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "GVC: received version range [%"PRIu64"-%"PRIu64"] from leader",
+                gvc_state.local_version_start, gvc_state.local_version_end);
+        return 0;
+    }
     
-    range.start = base_version + (10000 * node_id);
-    range.end = range.start + count;
-    
-    gvc_state.local_version_start = range.start;
-    gvc_state.local_version_end = range.end;
-    gvc_state.local_version_next = range.start;
-    
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC: temporary allocation [%"PRIu64"-%"PRIu64"] for node %u",
-            range.start, range.end, node_id);
-    return 0;
+    /* RPC failed */
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "GVC: failed to get versions from leader %u", leader);
+    return -1;
 }
 
 /* Calculate adaptive batch size based on usage patterns */

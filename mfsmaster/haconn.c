@@ -28,6 +28,8 @@
 #include "crc.h"
 #include "massert.h"
 #include "crdtstore.h"
+#include "gvc.h"
+#include <pthread.h>
 #include "metasync.h"
 #include "raftconsensus.h"
 
@@ -54,6 +56,10 @@ enum {
 /* Handshake message types */
 #define MFSHA_HANDSHAKE_REQ   0x1100
 #define MFSHA_HANDSHAKE_RESP  0x1101
+
+/* GVC RPC message types */
+#define MFSHA_GVC_VERSION_REQ  0x3000
+#define MFSHA_GVC_VERSION_RESP 0x3001
 
 /* Packet structures */
 typedef struct out_packet {
@@ -105,6 +111,21 @@ static uint64_t stats_bytesout = 0;
 static uint64_t stats_bytesin = 0;
 static uint64_t stats_packetsin = 0;
 static uint64_t stats_packetsout = 0;
+
+/* Pending GVC requests */
+typedef struct gvc_request {
+	struct gvc_request *next;
+	uint32_t request_id;
+	uint32_t count;
+	uint64_t *result_ptr;
+	uint64_t timeout;
+	pthread_cond_t cond;
+	int completed;
+} gvc_request_t;
+
+static gvc_request_t *gvc_requests = NULL;
+static pthread_mutex_t gvc_mutex = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t gvc_request_counter = 0;
 
 /* Function prototypes */
 static haconn_t* haconn_new(int sock);
@@ -432,6 +453,97 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				metasync_handle_message(conn->peerid, data, length);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid metadata sync size");
+			}
+			break;
+			
+		case MFSHA_GVC_VERSION_REQ:
+			/* Handle GVC version allocation request */
+			if (conn->mode != HACONN_CONNECTED) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: received GVC request before handshake");
+				conn->mode = HACONN_KILL;
+				break;
+			}
+			if (length == 8) { /* request_id:4 + count:4 */
+				const uint8_t *ptr = data;
+				uint32_t request_id = get32bit(&ptr);
+				uint32_t count = get32bit(&ptr);
+				uint8_t *resp;
+				
+				/* Check if we're the GVC leader */
+				if (raft_is_leader(0)) {
+					/* Allocate version range */
+					version_range_t range;
+					if (gvc_allocate_versions(count, &range) == 0) {
+						/* Send success response: request_id:4 + status:1 + start:8 + end:8 */
+						resp = haconn_createpacket(conn, MFSHA_GVC_VERSION_RESP, 21);
+						if (resp) {
+							put32bit(&resp, request_id);
+							put8bit(&resp, 0); /* success */
+							put64bit(&resp, range.start);
+							put64bit(&resp, range.end);
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: allocated versions [%"PRIu64"-%"PRIu64"] for peer %u",
+							        range.start, range.end, conn->peerid);
+						}
+					} else {
+						/* Send failure response: request_id:4 + status:1 */
+						resp = haconn_createpacket(conn, MFSHA_GVC_VERSION_RESP, 5);
+						if (resp) {
+							put32bit(&resp, request_id);
+							put8bit(&resp, 1); /* failure */
+						}
+					}
+				} else {
+					/* Not the leader, send failure */
+					resp = haconn_createpacket(conn, MFSHA_GVC_VERSION_RESP, 5);
+					if (resp) {
+						put32bit(&resp, request_id);
+						put8bit(&resp, 2); /* not leader */
+					}
+				}
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid GVC request size");
+			}
+			break;
+			
+		case MFSHA_GVC_VERSION_RESP:
+			/* Handle GVC version allocation response */
+			if (conn->mode != HACONN_CONNECTED) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: received GVC response before handshake");
+				conn->mode = HACONN_KILL;
+				break;
+			}
+			if (length >= 5) { /* request_id:4 + status:1 [+ start:8 + end:8] */
+				const uint8_t *ptr = data;
+				uint32_t request_id = get32bit(&ptr);
+				uint8_t status = get8bit(&ptr);
+				
+				pthread_mutex_lock(&gvc_mutex);
+				gvc_request_t *req = gvc_requests;
+				while (req) {
+					if (req->request_id == request_id) {
+						if (status == 0 && length == 21) {
+							/* Success - extract version range */
+							uint64_t start = get64bit(&ptr);
+							uint64_t end = get64bit(&ptr);
+							*req->result_ptr = start;
+							req->completed = 1;
+							pthread_cond_signal(&req->cond);
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received version range [%"PRIu64"-%"PRIu64"]",
+							        start, end);
+						} else {
+							/* Failure */
+							req->completed = -1;
+							pthread_cond_signal(&req->cond);
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: GVC request %u failed (status=%u)",
+							        request_id, status);
+						}
+						break;
+					}
+					req = req->next;
+				}
+				pthread_mutex_unlock(&gvc_mutex);
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid GVC response size");
 			}
 			break;
 			
@@ -1149,4 +1261,96 @@ void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length) {
 		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn_send_raft_broadcast: connection states - free:%"PRIu32" connecting:%"PRIu32" handshake:%"PRIu32" connected:%"PRIu32" killed:%"PRIu32, 
 		       free_count, connecting, handshake, connected, killed);
 	}
+}
+
+/* Request version range from GVC leader */
+int haconn_request_version_range(uint32_t leader_id, uint32_t count, uint64_t *start_version) {
+	haconn_t *conn;
+	uint8_t *ptr;
+	gvc_request_t *req;
+	uint32_t my_request_id;
+	struct timespec ts;
+	int ret;
+	
+	/* Create request structure */
+	req = malloc(sizeof(gvc_request_t));
+	if (!req) {
+		return -1;
+	}
+	
+	pthread_mutex_lock(&gvc_mutex);
+	my_request_id = ++gvc_request_counter;
+	req->request_id = my_request_id;
+	req->count = count;
+	req->result_ptr = start_version;
+	req->timeout = monotonic_seconds() + 5; /* 5 second timeout */
+	pthread_cond_init(&req->cond, NULL);
+	req->completed = 0;
+	req->next = gvc_requests;
+	gvc_requests = req;
+	pthread_mutex_unlock(&gvc_mutex);
+	
+	/* Find connection to leader */
+	for (conn = haconn_head; conn; conn = conn->next) {
+		if (conn->mode == HACONN_CONNECTED && conn->peerid == leader_id) {
+			/* Send request: request_id:4 + count:4 */
+			ptr = haconn_createpacket(conn, MFSHA_GVC_VERSION_REQ, 8);
+			if (ptr) {
+				put32bit(&ptr, my_request_id);
+				put32bit(&ptr, count);
+				
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: sent GVC version request to leader %u (req_id=%u count=%u)",
+				        leader_id, my_request_id, count);
+				
+				/* Wait for response */
+				pthread_mutex_lock(&gvc_mutex);
+				clock_gettime(CLOCK_REALTIME, &ts);
+				ts.tv_sec += 5; /* 5 second timeout */
+				
+				while (!req->completed) {
+					ret = pthread_cond_timedwait(&req->cond, &gvc_mutex, &ts);
+					if (ret == ETIMEDOUT) {
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: GVC request %u timed out", my_request_id);
+						break;
+					}
+				}
+				
+				/* Remove from pending list */
+				gvc_request_t **reqp = &gvc_requests;
+				while (*reqp) {
+					if (*reqp == req) {
+						*reqp = req->next;
+						break;
+					}
+					reqp = &(*reqp)->next;
+				}
+				
+				ret = req->completed ? 0 : -1;
+				pthread_cond_destroy(&req->cond);
+				pthread_mutex_unlock(&gvc_mutex);
+				free(req);
+				
+				return ret;
+			}
+			break;
+		}
+	}
+	
+	/* No connection found, clean up */
+	pthread_mutex_lock(&gvc_mutex);
+	gvc_request_t **reqp = &gvc_requests;
+	while (*reqp) {
+		if (*reqp == req) {
+			*reqp = req->next;
+			break;
+		}
+		reqp = &(*reqp)->next;
+	}
+	pthread_mutex_unlock(&gvc_mutex);
+	
+	pthread_cond_destroy(&req->cond);
+	free(req);
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: no connection to GVC leader %u", leader_id);
+	return -1;
 }

@@ -267,6 +267,11 @@ void changelog(const char *format,...) {
 
 
 	version = meta_version_inc();
+	if (version == 0) {
+		/* Version allocation failed - cannot write changelog */
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_ERR,"changelog: cannot write - no version available");
+		return;
+	}
 
 	changelog_mr(version,printbuff);
 	changelog_store_logstring(version,(uint8_t*)printbuff,leng);
