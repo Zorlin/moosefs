@@ -1506,6 +1506,27 @@ void masterconn_gotpacket(masterconn *eptr,uint32_t type,const uint8_t *data,uin
 		case MATOCS_CHUNK_STATUS:
 			masterconn_chunk_status(eptr,data,length);
 			break;
+		case MATOCS_HA_LEADER_REDIRECT:
+			if (length == 6) {
+				uint32_t leader_ip = get32bit(&data);
+				uint16_t leader_port = get16bit(&data);
+				char stripbuf[32];
+				
+				univmakestrip(stripbuf, leader_ip);
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"got leader redirect to %s:%u", stripbuf, leader_port);
+				
+				/* Update master address to leader and reconnect */
+				if (eptr->masterip != leader_ip || eptr->masterport != leader_port) {
+					eptr->masterip = leader_ip;
+					eptr->masterport = leader_port;
+					/* Force reconnection to the leader */
+					eptr->mode = KILL;
+				}
+			} else {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"MATOCS_HA_LEADER_REDIRECT - wrong size (%"PRIu32"/6)",length);
+				eptr->mode = KILL;
+			}
+			break;
 		default:
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"got unknown message (type:%"PRIu32")",type);
 			eptr->mode = KILL;

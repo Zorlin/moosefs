@@ -2515,5 +2515,9 @@
 #define MATOCL_HA_LEADER_REDIRECT (PROTO_BASE+719)
 // leader_ip:32 leader_port:16
 
+// 0x02D0
+#define MATOCS_HA_LEADER_REDIRECT (PROTO_BASE+720)
+// leader_ip:32 leader_port:16
+
 
 #endif

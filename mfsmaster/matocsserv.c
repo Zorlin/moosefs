@@ -49,6 +49,8 @@
 #include "sockets.h"
 #include "chunks.h"
 #include "hamaster.h"
+#include "haconn.h"
+#include "raftconsensus.h"
 #include "crdtstore.h"
 #include "random.h"
 #include "sizestr.h"
@@ -2612,6 +2614,44 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 			} else {
 				eptr->timeout = get16bit(&data);
 			}
+			
+			/* In HA mode, only the leader should accept chunkserver registrations */
+			if (ha_mode_enabled() && !raft_is_leader()) {
+				uint32_t leader_id = raft_get_leader();
+				uint32_t my_node_id = ha_get_node_id();
+				uint32_t leader_ip = 0;
+				uint16_t leader_port = 0;
+				
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Chunkserver registration rejected - not leader (my_node=%u, leader=%u)", my_node_id, leader_id);
+				
+				/* Sanity check - if raft_get_leader returns our node ID, we're actually the leader */
+				if (leader_id == my_node_id) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Chunkserver registration: raft_is_leader/raft_get_leader inconsistency - we are actually the leader, accepting registration");
+					/* Continue with normal registration processing */
+				} else {
+					/* Try to get leader connection information for redirection */
+					if (leader_id != 0 && haconn_get_leader_info(leader_id, &leader_ip, &leader_port) == 0) {
+						/* Send custom redirection response with leader info */
+						uint8_t *ptr = matocsserv_create_packet(eptr, MATOCS_HA_LEADER_REDIRECT, 6);
+						put32bit(&ptr, leader_ip);      /* Leader IP address */
+						put16bit(&ptr, leader_port);    /* Leader port */
+						mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Chunkserver redirection: leader is at %u.%u.%u.%u:%u - closing connection", 
+						        (leader_ip >> 24) & 0xFF, (leader_ip >> 16) & 0xFF, (leader_ip >> 8) & 0xFF, leader_ip & 0xFF, leader_port);
+						/* Close connection after redirect to force chunkserver to reconnect to leader */
+						eptr->mode = FINISH;
+						return;
+					} else {
+						/* Send standard rejection response */
+						uint8_t *ptr = matocsserv_create_packet(eptr, MATOCS_MASTER_ACK, 1);
+						put8bit(&ptr, 1); /* Error code */
+						mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"Chunkserver redirection: leader info not available (leader_id=%u)", leader_id);
+						/* Close connection since we can't provide service */
+						eptr->mode = KILL;
+						return;
+					}
+				}
+			}
+			
 			if (sclass_ec_version()>0 && eptr->version<VERSION2INT(4,0,0)) {
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"CSTOMA_REGISTER: chunkserver is too old - erasure coding needs chunkservers at least 4.x");
 				eptr->mode = KILL;
