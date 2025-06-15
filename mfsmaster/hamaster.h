@@ -23,4 +23,10 @@ const char* ha_get_peers(void);
  */
 int ha_metadata_sync(void);
 
+/* Request missing changelog entries from peers
+ * This is called when a version gap is detected during replay
+ * The HA module will attempt to fetch the missing entries from other nodes
+ */
+void ha_request_missing_changelog_range(uint64_t start_version, uint64_t end_version);
+
 #endif

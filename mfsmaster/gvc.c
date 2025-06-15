@@ -255,10 +255,14 @@ static int gvc_request_version_range(uint32_t count) {
         }
         
         /* Add a small safety margin to avoid conflicts */
-        /* Just add batch_size * node_id to create separation */
-        min_version = min_version + (count * node_id);
+        /* Use smaller offset based on node_id to reduce gaps */
+        /* Each node gets an offset of 100 * node_id */
+        uint64_t old_version = min_version;
+        min_version = min_version + (100 * node_id);
         
         if (min_version > gvc_state.current_version) {
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "GVC adjusting version from %"PRIu64" to %"PRIu64" (added %"PRIu64" for node %u safety margin)",
+                    old_version, min_version, min_version - old_version, node_id);
             gvc_state.current_version = min_version;
         }
         

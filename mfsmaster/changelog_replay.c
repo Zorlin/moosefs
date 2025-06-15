@@ -70,7 +70,13 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
             }
             mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: version gap detected - expected %"PRIu64", got %"PRIu64" (gap=%"PRIu64")",
                     highest_replayed_version + 1, version, gap);
-            /* TODO: Request missing versions from gap */
+            /* Request missing versions from gap */
+            uint64_t missing_start = highest_replayed_version + 1;
+            uint64_t missing_end = version - 1;
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "changelog_replay: requesting missing versions [%"PRIu64"-%"PRIu64"]",
+                    missing_start, missing_end);
+            /* This will be handled by the HA module to fetch from peers */
+            ha_request_missing_changelog_range(missing_start, missing_end);
         } else {
             /* Version is older than expected, skip it */
             pthread_mutex_unlock(&replay_mutex);
@@ -93,9 +99,19 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
     if (result != MFS_STATUS_OK) {
         /* Some operations may fail due to missing dependencies (e.g., sessions) */
         /* Log but continue to avoid blocking synchronization */
-        if (result == MFS_ERROR_MISMATCH || result == MFS_ERROR_NOTFOUND) {
-            mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "changelog_replay: operation skipped v%"PRIu64" status=%d (missing dependency): %s", 
-                    version, result, entry);
+        if (result == MFS_ERROR_MISMATCH || result == MFS_ERROR_NOTFOUND || result == MFS_ERROR_BADSESSIONID) {
+            /* Check if this is a session-related operation */
+            if (strstr(entry, "SESADD") != NULL) {
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "changelog_replay: session operation skipped v%"PRIu64" status=%d (session conflict): %s", 
+                        version, result, entry);
+            } else {
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "changelog_replay: operation skipped v%"PRIu64" status=%d (missing dependency): %s", 
+                        version, result, entry);
+            }
+        } else if (result == MFS_ERROR_EEXIST && strstr(entry, "SESADD") != NULL) {
+            /* Session already exists - this is fine in HA scenario */
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "changelog_replay: session already exists v%"PRIu64": %s", 
+                    version, entry);
         } else {
             mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: operation failed v%"PRIu64" status=%d: %s", 
                     version, result, entry);

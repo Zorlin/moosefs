@@ -161,3 +161,20 @@ int ha_metadata_sync(void) {
     mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA metadata sync: CRDT differences sync completed successfully");
     return 0;
 }
+
+void ha_request_missing_changelog_range(uint64_t start_version, uint64_t end_version) {
+    if (!ha_enabled) {
+        return; /* No-op if HA mode is not enabled */
+    }
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA: requesting missing changelog entries [%"PRIu64"-%"PRIu64"]", 
+            start_version, end_version);
+    
+    /* TODO: Implement protocol to request specific version ranges from peers */
+    /* For now, we'll rely on the periodic sync to eventually catch up */
+    /* This would involve:
+     * 1. Query all connected peers for who has these versions
+     * 2. Request the missing entries from the peer with the best connection
+     * 3. Replay them through changelog_replay_entry()
+     */
+}
