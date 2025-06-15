@@ -33,6 +33,7 @@
 #include <pthread.h>
 #include "metasync.h"
 #include "raftconsensus.h"
+#include "main.h"
 
 /* MFS HA Protocol message types */
 #define MFSHA_NOP             0x1000
@@ -701,6 +702,10 @@ int haconn_init(void) {
 	
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: listening on port %u, node ID %u", listen_port, my_nodeid);
 	
+	/* Register with main poll loop */
+	main_poll_register(haconn_desc, haconn_serve);
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: registered with main poll loop");
+	
 	/* Parse peers_config and establish connections */
 	if (peers_config && strlen(peers_config) > 0) {
 		char *peers_copy = strdup(peers_config);
@@ -718,8 +723,8 @@ int haconn_init(void) {
 				int is_self = (peer_position == my_nodeid);
 				
 				/* Debug: Log peer connection decision */
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: peer %s:%u position=%u is_self=%d", 
-				        peer, port, peer_position, is_self);
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: peer %s:%u position=%u is_self=%d (my_nodeid=%u)", 
+				        peer, port, peer_position, is_self, my_nodeid);
 				
 				if (!is_self) {
 					/* Connect to peer */
@@ -900,8 +905,11 @@ void haconn_serve(struct pollfd *pdesc) {
 			
 			/* Handle connection errors */
 			if (conn->mode == HACONN_CONNECTING && (pdesc[conn->pdescpos].revents & (POLLERR | POLLHUP))) {
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection error/hangup (fd=%d) revents=0x%x", 
-				       conn->sock, pdesc[conn->pdescpos].revents);
+				int err = 0;
+				socklen_t errlen = sizeof(err);
+				getsockopt(conn->sock, SOL_SOCKET, SO_ERROR, &err, &errlen);
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: connection error/hangup (fd=%d) revents=0x%x SO_ERROR=%d:%s", 
+				       conn->sock, pdesc[conn->pdescpos].revents, err, strerror(err));
 				conn->mode = HACONN_KILL;
 			}
 			
