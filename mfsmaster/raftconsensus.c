@@ -28,6 +28,7 @@
 #include "main.h"
 #include "metadata.h"
 #include "restore.h"
+#include "changelog_replay.h"
 
 /* Global Raft state - single group, no sharding */
 static raft_context_t raft_state;
@@ -646,19 +647,18 @@ static void raft_apply_committed_entries(void) {
 			/* Apply this entry based on its type */
 			switch (entry->type) {
 				case RAFT_ENTRY_CHANGELOG:
-					/* Apply changelog entry to filesystem */
+					/* Apply changelog entry to filesystem using replay mechanism */
 					if (entry->data && entry->data_size > 0) {
-						/* Make sure data is null-terminated for changelog_apply_string */
+						/* Make sure data is null-terminated for changelog replay */
 						char *changelog_str = malloc(entry->data_size + 1);
 						if (changelog_str) {
 							memcpy(changelog_str, entry->data, entry->data_size);
 							changelog_str[entry->data_size] = '\0';
 							
-							/* Apply the changelog entry to update local metadata */
-							mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Applying changelog entry: %s", changelog_str);
-							uint32_t restore_status;
-							if (restore_net(entry->version, changelog_str, &restore_status) < 0) {
-								mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Failed to apply changelog entry for version %"PRIu64": %s", 
+							/* Apply the changelog entry using replay mechanism (no new changelog writes) */
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Replaying changelog entry v%"PRIu64": %s", entry->version, changelog_str);
+							if (changelog_replay_entry(entry->version, changelog_str) < 0) {
+								mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Failed to replay changelog entry for version %"PRIu64": %s", 
 								        entry->version, changelog_str);
 							}
 							
