@@ -1212,8 +1212,8 @@ int haconn_get_leader_info(uint32_t leader_id, uint32_t *leader_ip, uint16_t *le
 	*leader_port = 0;
 	
 	if (leader_id == my_nodeid) {
-		/* We are the leader - return our listen address */
-		/* For simplicity, return 0.0.0.0 which means client should use same IP it connected with */
+		/* We are the leader - this should not happen if we're redirecting! */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_get_leader_info: asked for leader info but we ARE the leader (leader_id=%u, my_nodeid=%u)", leader_id, my_nodeid);
 		*leader_ip = 0;
 		*leader_port = 9421; /* Standard MooseFS client port */
 		return 0;

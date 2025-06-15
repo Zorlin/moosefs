@@ -1604,6 +1604,17 @@ int fs_connect(uint8_t oninit,struct connect_args_t *cargs) {
 				/* leader_ip=0 means use same IP we connected to */
 				leader_ip = srcip;
 			}
+			
+			/* Prevent redirect loops - don't redirect to the same server */
+			if (leader_ip == masterip && leader_port == masterport) {
+				if (oninit) {
+					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"redirect loop detected - leader points to same server");
+				} else {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"redirect loop detected - leader points to same server");
+				}
+				return -1;
+			}
+			
 			/* Update master connection info to point to leader */
 			masterip = leader_ip;
 			masterport = leader_port;

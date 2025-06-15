@@ -1671,10 +1671,11 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 	/* In HA mode, only the leader should accept client registrations */
 	if (ha_mode_enabled() && !raft_is_leader()) {
 		uint32_t leader_id = raft_get_leader();
+		uint32_t my_node_id = ha_get_node_id();
 		uint32_t leader_ip = 0;
 		uint16_t leader_port = 0;
 		
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client registration rejected - not leader (leader is node %u)", leader_id);
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client registration rejected - not leader (my_node=%u, leader=%u)", my_node_id, leader_id);
 		
 		/* Try to get leader connection information for redirection */
 		if (leader_id != 0 && haconn_get_leader_info(leader_id, &leader_ip, &leader_port) == 0) {
