@@ -119,12 +119,15 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
         /* Continue anyway to not block synchronization */
     }
     
-    /* Update our version */
-    highest_replayed_version = version;
-    
-    /* Also update the main metadata version to stay in sync */
-    if (meta_version() < version) {
-        meta_set_version(version);
+    /* Update our highest replayed version */
+    if (version > highest_replayed_version) {
+        highest_replayed_version = version;
+        
+        /* Also update the main metadata version to stay in sync */
+        /* Only update if this is a newer version */
+        if (meta_version() < version) {
+            meta_set_version(version);
+        }
     }
     
     pthread_mutex_unlock(&replay_mutex);
