@@ -893,11 +893,16 @@ void haconn_send_crdt_delta(const uint8_t *data, uint32_t length) {
 	haconn_t *conn;
 	uint8_t *ptr;
 	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_crdt_delta: broadcasting %u bytes", length);
+	
 	for (conn = haconn_head; conn; conn = conn->next) {
 		if (conn->mode == HACONN_CONNECTED) {
 			ptr = haconn_createpacket(conn, MFSHA_CRDT_DELTA, length);
 			if (ptr) {
 				memcpy(ptr, data, length);
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_crdt_delta: sent %u bytes to peer %u", length, conn->peerid);
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_send_crdt_delta: failed to create packet for peer %u", conn->peerid);
 			}
 		}
 	}

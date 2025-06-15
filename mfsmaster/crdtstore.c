@@ -274,6 +274,8 @@ int crdtstore_put(crdt_store_t *store, uint64_t key, crdt_type_t type,
 			if (crdtstore_serialize_entry(entry, &delta_data, &delta_size) == 0 && delta_data != NULL) {
 				haconn_send_crdt_delta(delta_data, delta_size);
 				free(delta_data);
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "crdtstore_put: failed to serialize entry for broadcast (key=%"PRIu64")", entry->key);
 			}
 		}
 		
@@ -310,6 +312,8 @@ int crdtstore_put(crdt_store_t *store, uint64_t key, crdt_type_t type,
 		if (crdtstore_serialize_entry(new_entry, &delta_data, &delta_size) == 0 && delta_data != NULL) {
 			haconn_send_crdt_delta(delta_data, delta_size);
 			free(delta_data);
+		} else {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "crdtstore_put: failed to serialize new entry for broadcast (key=%"PRIu64")", new_entry->key);
 		}
 	}
 	
@@ -1023,10 +1027,16 @@ int crdtstore_serialize_entry(const crdt_entry_t *entry, uint8_t **data, uint32_
 	}
 	
 	/* Calculate total size */
-	total_size = 8 + 4 + 8 + 4 + 4 + 4 + entry->value_size;  /* key + type + timestamp + node_id + counter + value_size + value = 36 + value_size */
+	total_size = 8 + 4 + 8 + 4 + 4 + 4 + entry->value_size;  /* key + type + timestamp + node_id + counter + value_size + value = 32 + value_size */
 	
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "crdtstore serialize: key=%"PRIu64" type=%u timestamp=%"PRIu64" node_id=%u counter=%u value_size=%u total_size=%u", 
 		entry->key, entry->type, entry->ts.timestamp, entry->ts.node_id, entry->ts.counter, entry->value_size, total_size);
+	
+	/* Verify serialization format */
+	if (total_size < 32) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "crdtstore serialize: BUG - total_size %u < 32", total_size);
+		return -1;
+	}
 	
 	*data = malloc(total_size);
 	if (*data == NULL) {
