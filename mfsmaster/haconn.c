@@ -334,6 +334,17 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 					if (value_size > 10000000) {
 						mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "haconn: CORRUPT value_size=%u (0x%08X) in CRDT delta from peer %u", 
 							value_size, value_size, conn->peerid);
+						
+						/* Dump the full corrupt packet for analysis */
+						char full_hex[1024];
+						uint32_t full_dump_len = (length > 64) ? 64 : length;
+						char *full_hex_ptr = full_hex;
+						for (uint32_t i = 0; i < full_dump_len; i++) {
+							sprintf(full_hex_ptr, "%02X ", data[i]);
+							full_hex_ptr += 3;
+						}
+						*full_hex_ptr = '\0';
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "haconn: CORRUPT PACKET hex dump (%u bytes): %s", full_dump_len, full_hex);
 					}
 				}
 			}
@@ -923,10 +934,10 @@ void haconn_send_crdt_delta(const uint8_t *data, uint32_t length) {
 	
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_crdt_delta: broadcasting %u bytes", length);
 	
-	/* Debug: Hex dump first 32 bytes of outgoing data */
+	/* Debug: Hex dump first 40 bytes of outgoing data */
 	if (length > 0) {
-		char hex_dump[256];
-		uint32_t dump_len = (length > 32) ? 32 : length;
+		char hex_dump[512];
+		uint32_t dump_len = (length > 40) ? 40 : length;
 		char *hex_ptr = hex_dump;
 		for (uint32_t i = 0; i < dump_len; i++) {
 			sprintf(hex_ptr, "%02X ", data[i]);
@@ -934,6 +945,25 @@ void haconn_send_crdt_delta(const uint8_t *data, uint32_t length) {
 		}
 		*hex_ptr = '\0';
 		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_crdt_delta: sending hex dump (%u bytes): %s", dump_len, hex_dump);
+		
+		/* Parse and verify the outgoing header too */
+		if (length >= 32) {
+			const uint8_t *ptr = data;
+			uint64_t key = get64bit(&ptr);
+			uint32_t type = get32bit(&ptr);
+			uint64_t timestamp = get64bit(&ptr);
+			uint32_t node_id = get32bit(&ptr);
+			uint32_t counter = get32bit(&ptr);
+			uint32_t value_size = get32bit(&ptr);
+			
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_crdt_delta: OUTGOING header: key=%"PRIu64" type=%u timestamp=%"PRIu64" node_id=%u counter=%u value_size=%u", 
+				key, type, timestamp, node_id, counter, value_size);
+				
+			if (value_size > 10000000) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "haconn_send_crdt_delta: BUG - OUTGOING data already corrupt! value_size=%u (0x%08X)", 
+					value_size, value_size);
+			}
+		}
 	}
 	
 	for (conn = haconn_head; conn; conn = conn->next) {
