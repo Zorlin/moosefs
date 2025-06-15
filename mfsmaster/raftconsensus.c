@@ -71,7 +71,7 @@ int raftconsensus_init(void) {
 	/* Set initial timeouts */
 	raft_state.election_timeout = get_election_timeout();
 	raft_state.heartbeat_timeout = heartbeat_interval;
-	raft_state.last_heartbeat = monotonic_useconds() / 1000;
+	raft_state.last_heartbeat = 0; /* Start with 0 to trigger immediate election */
 	
 	/* No leader initially */
 	raft_state.current_leader = 0;
