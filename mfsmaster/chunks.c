@@ -8626,6 +8626,11 @@ void chunk_jobs_main(void) {
 	chunk *c,*cn;
 	uint32_t now;
 
+	/* Only leader should manage chunk jobs */
+	if (ha_mode_enabled() && !raft_is_leader()) {
+		return;
+	}
+
 	static uint32_t jobshpos=0;
 	static uint32_t jobshstep=1;
 	static uint32_t jobshcnt=0;

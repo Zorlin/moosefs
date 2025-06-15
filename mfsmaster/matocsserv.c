@@ -1907,6 +1907,12 @@ int matocsserv_send_createchunk(void *e,uint64_t chunkid,uint8_t ecid,uint32_t v
 	matocsserventry *eptr = (matocsserventry *)e;
 	uint8_t *data;
 
+	/* Only leader should send chunk creation commands */
+	if (ha_mode_enabled() && !raft_is_leader()) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"follower: skipping chunk creation for chunk %016"PRIX64"_%02"PRIX8" - only leader manages chunks",chunkid,ecid);
+		return -1;
+	}
+
 //	matocsserv_chunk_status_remove(eptr,chunkid); // pro forma only
 	if (eptr->mode!=KILL) {
 		data = matocsserv_create_packet(eptr,MATOCS_CREATE,8+4);
@@ -1943,6 +1949,12 @@ int matocsserv_send_deletechunk(void *e,uint64_t chunkid,uint8_t ecid,uint32_t v
 	matocsserventry *eptr = (matocsserventry *)e;
 	uint64_t dstchunkid;
 	uint8_t *data;
+
+	/* Only leader should send chunk deletion commands */
+	if (ha_mode_enabled() && !raft_is_leader()) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"follower: skipping chunk deletion for chunk %016"PRIX64"_%02"PRIX8" - only leader manages chunks",chunkid,ecid);
+		return -1;
+	}
 
 //	matocsserv_chunk_status_remove(eptr,chunkid);
 	dstchunkid = COMBINE_CHUNKID_AND_ECID(chunkid,ecid);
