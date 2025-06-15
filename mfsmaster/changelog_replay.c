@@ -57,11 +57,27 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
     
     /* Check if this is the next expected version */
     if (version != highest_replayed_version + 1) {
-        pthread_mutex_unlock(&replay_mutex);
-        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: version gap detected - expected %"PRIu64", got %"PRIu64,
-                highest_replayed_version + 1, version);
-        /* TODO: Request missing versions */
-        return -1;
+        /* Handle version gaps */
+        if (version > highest_replayed_version + 1) {
+            /* We have a gap - log it but continue if reasonable */
+            uint64_t gap = version - highest_replayed_version - 1;
+            if (gap > 10000) {
+                /* Gap is too large, likely a synchronization issue */
+                pthread_mutex_unlock(&replay_mutex);
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "changelog_replay: version gap too large - expected %"PRIu64", got %"PRIu64" (gap=%"PRIu64")",
+                        highest_replayed_version + 1, version, gap);
+                return -1;
+            }
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: version gap detected - expected %"PRIu64", got %"PRIu64" (gap=%"PRIu64")",
+                    highest_replayed_version + 1, version, gap);
+            /* TODO: Request missing versions from gap */
+        } else {
+            /* Version is older than expected, skip it */
+            pthread_mutex_unlock(&replay_mutex);
+            mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "changelog_replay: skipping old version %"PRIu64" (expected %"PRIu64")",
+                    version, highest_replayed_version + 1);
+            return 0;
+        }
     }
     
     /* Parse and execute the changelog entry */

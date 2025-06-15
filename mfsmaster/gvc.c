@@ -244,6 +244,24 @@ static int gvc_request_version_range(uint32_t count) {
             gvc_state.current_version = meta_version();
         }
         
+        /* Ensure we start from a safe position by adding node_id offset */
+        /* This prevents version conflicts when leadership changes */
+        uint32_t node_id = ha_get_node_id();
+        uint64_t min_version = gvc_state.current_version;
+        
+        /* Check metadata version and use the higher value */
+        uint64_t meta_ver = meta_version();
+        if (meta_ver > min_version) {
+            min_version = meta_ver;
+        }
+        
+        /* Add a safety margin based on node_id to avoid conflicts */
+        min_version = ((min_version / 1000) + 1) * 1000 + (node_id * 100);
+        
+        if (min_version > gvc_state.current_version) {
+            gvc_state.current_version = min_version;
+        }
+        
         range.start = gvc_state.current_version;
         range.end = gvc_state.current_version + count;
         gvc_state.current_version = range.end;
@@ -252,28 +270,17 @@ static int gvc_request_version_range(uint32_t count) {
         gvc_state.local_version_end = range.end;
         gvc_state.local_version_next = range.start;
         
-        mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "GVC allocated versions [%"PRIu64"-%"PRIu64"] as shard 0 leader",
-                range.start, range.end);
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "GVC allocated versions [%"PRIu64"-%"PRIu64"] as shard 0 leader (node %u)",
+                range.start, range.end, node_id);
         
         return 0;
     }
     
-    /* TODO: Implement RPC request to leader */
-    /* For now, fall back to incrementing from last known version */
-    if (gvc_state.current_version == 0) {
-        gvc_state.current_version = meta_version();
-    }
-    
-    gvc_state.local_version_start = gvc_state.current_version;
-    gvc_state.local_version_end = gvc_state.current_version + count;
-    gvc_state.local_version_next = gvc_state.local_version_start;
-    gvc_state.current_version = gvc_state.local_version_end;
-    
+    /* Not the leader - cannot allocate versions */
     uint32_t leader = raft_get_leader(0);
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "GVC using local allocation [%"PRIu64"-%"PRIu64"] - leader is node %u",
-            gvc_state.local_version_start, gvc_state.local_version_end, leader);
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "GVC not allocating versions - not leader (leader is node %u)", leader);
     
-    return 0;
+    return -1;
 }
 
 /* Calculate adaptive batch size based on usage patterns */
