@@ -46,6 +46,30 @@ This project implements a complete high-availability (HA) and metadata sharding 
    - Prevents version from going backwards (e.g., 4008 to 3xxx)
    - GVC now uses smarter version allocation with smaller gaps (10 * node_id)
 
+### New Session Work - Chunk Registration and HA Fixes
+
+1. **Fixed Metadata Version Divergence**:
+   - Fixed csdb_mr_op to not increment version during restore/replay operations
+   - Version is already set by changelog replay, preventing double increments
+   - Resolves massive version divergence between masters (12,859 vs 11,672)
+
+2. **Added Periodic Peer Retry**:
+   - Implemented haconn_retry_peer_connections() with 5-second retry interval
+   - Fixes issue where elections wouldn't happen unless masters started simultaneously
+   - Ensures all masters eventually connect to each other
+
+3. **Protected Chunk Operations**:
+   - Added leader checks to matocsserv_send_deletechunk and matocsserv_send_createchunk
+   - Only leader should send chunk deletion/creation commands to chunkservers
+   - Prevents data loss when leadership changes (84 chunks missing issue)
+   - Protected chunk_jobs_main to only run on leader
+
+4. **Fixed Chunk Registration Synchronization**:
+   - Identified global chunk iteration state causing registration freeze
+   - Used Raft lease mechanism to ensure only leader processes chunk registrations
+   - Prevents concurrent chunk registration from multiple masters
+   - Followers now skip chunk registration packets when they don't have a valid lease
+
 ### Key Accomplishments from Previous Session
 
 1. **Network Layer Fixed**: 
@@ -78,6 +102,11 @@ HA Connections (Port 9430)
     ├── CRDT Synchronization (Metadata)
     ├── Changelog Replication (Sequential Operations)
     └── Gossip Protocol (Node Discovery) - Port 9431
+    
+Chunkservers
+    ├── Connect to all masters simultaneously
+    ├── Only leader processes chunk registrations (using Raft lease)
+    └── Maintain persistent connections during leader changes
 ```
 
 ### Remaining Issues
@@ -101,25 +130,34 @@ HA Connections (Port 9430)
    - Need session state synchronization protocol
    - Current workaround: skip conflicting sessions and continue
 
+5. **Chunkserver State Issues**:
+   - Double-counting of chunkserver space on leader
+   - Version initialization after metadata sync
+   - Need to maintain chunkserver connections during leader->follower transitions
+
 ## Next Steps
 
-1. Implement version range negotiation protocol
-2. Add missing version recovery mechanism
-3. Integrate gossip-discovered nodes with Raft peer management
-4. Test full multi-master file operations with proper version coordination
-5. Implement cross-shard transaction support
+1. Fix double-counting of chunkserver space on leader
+2. Fix version initialization after metadata sync
+3. Ensure chunk operations go through Raft for consistency
+4. Enable read operations from any master
+5. Implement version range negotiation protocol
+6. Add missing version recovery mechanism
+7. Integrate gossip-discovered nodes with Raft peer management
 
 ## Performance Observations
 - Raft elections complete quickly (< 2 seconds)
 - CRDT synchronization working without corruption
 - Changelog entries propagate between nodes successfully
+- Chunk registration now synchronized using Raft lease mechanism
 
 ## Technical Architecture Summary
 - **Raft Leader Lock Pattern**: Per-shard leadership with fast failover
 - **CRDT-based Metadata**: Multi-writer capability with eventual consistency
 - **Gossip Protocol**: UDP-based node discovery and health monitoring
 - **Version Coordination**: GVC with node-specific ranges to avoid conflicts
+- **Chunk Registration**: Only leader with valid lease processes registrations
 
 ---
 *Last Updated: 2025-06-15*
-*Session Status: Continuing from previous work on version gap issues*
+*Session Status: Fixed chunk registration synchronization using Raft lease*

@@ -2767,7 +2767,12 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 			 * This prevents concurrent chunk registration from multiple masters */
 			if (ha_mode_enabled() && !raft_has_valid_lease()) {
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"not processing chunk registration - no valid lease (leader=%u)",raft_get_leader());
-				/* Don't kill the connection - the chunkserver will continue with other masters */
+				/* Send ACK to keep chunkserver happy even though we're not processing chunks */
+				if (eptr->version>=VERSION2INT(2,0,0)) {
+					uint8_t *p;
+					p = matocsserv_create_packet(eptr,MATOCS_MASTER_ACK,1);
+					put8bit(&p,0);
+				}
 				return;
 			}
 			
@@ -2798,15 +2803,16 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 				return;
 			}
 			
-			/* In HA mode, only process END if we have a valid lease */
+			/* In HA mode, only leader processes chunk operations but all masters complete registration */
 			if (ha_mode_enabled() && !raft_has_valid_lease()) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"not processing chunk registration end - no valid lease");
-				return;
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"follower: completing registration for %s (chunks not processed)",eptr->servdesc);
+				eptr->registered = REGISTERED;
+				/* Don't call chunk_server_register_end as we didn't process chunks */
+			} else {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s register end",eptr->servdesc);
+				eptr->registered = REGISTERED;
+				chunk_server_register_end(eptr->csid);
 			}
-			
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s register end",eptr->servdesc);
-			eptr->registered = REGISTERED;
-			chunk_server_register_end(eptr->csid);
 		} else if (rversion==63) {
 			if (length!=1) {
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"CSTOMA_REGISTER (DISCONNECT) - wrong size (%"PRIu32"/1)",length);

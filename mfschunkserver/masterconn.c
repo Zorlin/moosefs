@@ -460,11 +460,13 @@ void masterconn_sendnextchunks(masterconn *eptr) {
 	uint8_t *buff;
 	uint32_t chunks;
 	chunks = hdd_get_chunks_next_list_count(ChunksPerRegisterPacket);
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"sendnextchunks: chunks=%u for %s:%u",chunks,eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 	if (chunks==0) {
 		hdd_get_chunks_end();
 		buff = masterconn_create_attached_packet(eptr,CSTOMA_REGISTER,1);
 		put8bit(&buff,62);
 		eptr->registerstate = REGISTERED;
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"registration complete for %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 	} else {
 		buff = masterconn_create_attached_packet(eptr,CSTOMA_REGISTER,1+chunks*(8+4));
 		put8bit(&buff,61);
@@ -536,6 +538,7 @@ void masterconn_master_ack(masterconn *eptr,const uint8_t *data,uint32_t length)
 			return;
 		} else {
 			if (eptr->registerstate == UNREGISTERED || eptr->registerstate == WAITING) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"starting chunk registration for %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 				hdd_get_chunks_begin(1);
 				eptr->registerstate = INPROGRESS;
 				if (eptr->masterversion>=VERSION2INT(2,1,0)) {
@@ -543,6 +546,7 @@ void masterconn_master_ack(masterconn *eptr,const uint8_t *data,uint32_t length)
 				}
 			}
 			if (eptr->registerstate == INPROGRESS) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"continuing chunk registration for %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 				masterconn_sendnextchunks(eptr);
 			}
 		}
