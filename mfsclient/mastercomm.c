@@ -1557,7 +1557,61 @@ int fs_connect(uint8_t oninit,struct connect_args_t *cargs) {
 		}
 		rptr = regbuff;
 		i = get32bit(&rptr);
-		if (i!=MATOCL_FUSE_REGISTER) {
+		if (i==MATOCL_HA_LEADER_REDIRECT) {
+			/* Handle HA leader redirection */
+			i = get32bit(&rptr);  /* Get data length */
+			if (i != 6) {
+				if (oninit) {
+					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"invalid HA redirect response length");
+				} else {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"invalid HA redirect response length");
+				}
+				tcpclose(fd);
+				fd=-1;
+				free(regbuff);
+				return -1;
+			}
+			if (tcptoread(fd,regbuff,6,1000,recv_timeout*1000)!=6) {
+				if (oninit) {
+					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"error receiving redirect data from mfsmaster: %s",strerr(errno));
+				} else {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"error receiving redirect data from mfsmaster: %s",strerr(errno));
+				}
+				tcpclose(fd);
+				fd=-1;
+				free(regbuff);
+				return -1;
+			}
+			rptr = regbuff;
+			uint32_t leader_ip = get32bit(&rptr);
+			uint16_t leader_port = get16bit(&rptr);
+			
+			if (oninit) {
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"mfsmaster redirected to leader at %u.%u.%u.%u:%u",
+				        (leader_ip >> 24) & 0xFF, (leader_ip >> 16) & 0xFF, (leader_ip >> 8) & 0xFF, leader_ip & 0xFF, leader_port);
+			} else {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"mfsmaster redirected to leader at %u.%u.%u.%u:%u",
+				        (leader_ip >> 24) & 0xFF, (leader_ip >> 16) & 0xFF, (leader_ip >> 8) & 0xFF, leader_ip & 0xFF, leader_port);
+			}
+			
+			/* Close current connection */
+			tcpclose(fd);
+			fd=-1;
+			free(regbuff);
+			
+			/* Try to connect to the leader */
+			if (leader_ip == 0) {
+				/* leader_ip=0 means use same IP we connected to */
+				leader_ip = srcip;
+			}
+			/* Update master connection info to point to leader */
+			masterip = leader_ip;
+			masterport = leader_port;
+			univmakestrip(masterstrip, masterip);
+			
+			/* Retry connection with leader */
+			return fs_connect(oninit, cargs);
+		} else if (i!=MATOCL_FUSE_REGISTER) {
 			if (oninit) {
 				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"got incorrect answer from mfsmaster");
 			} else {
