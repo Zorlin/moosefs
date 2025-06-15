@@ -597,6 +597,12 @@ static void raft_apply_committed_entries(void) {
 void raftconsensus_tick(double now) {
 	uint64_t now_ms = (uint64_t)(now * 1000);
 	static uint64_t last_tick_log = 0;
+	static int first_call = 1;
+	
+	if (first_call) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_tick first call: now=%f, now_ms=%"PRIu64, now, now_ms);
+		first_call = 0;
+	}
 	
 	pthread_mutex_lock(&raft_mutex);
 	
@@ -651,6 +657,11 @@ void raftconsensus_tick(double now) {
 
 /* Wrapper for main loop */
 void raftconsensus_tick_wrapper(void) {
+	static int first_tick = 1;
+	if (first_tick) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Raft tick started!");
+		first_tick = 0;
+	}
 	raftconsensus_tick(monotonic_seconds());
 }
 
