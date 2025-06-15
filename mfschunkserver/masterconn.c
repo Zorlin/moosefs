@@ -460,14 +460,16 @@ void masterconn_sendnextchunks(masterconn *eptr) {
 	uint8_t *buff;
 	uint32_t chunks;
 	chunks = hdd_get_chunks_next_list_count(ChunksPerRegisterPacket);
-	mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"sendnextchunks: chunks=%u for %s:%u",chunks,eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"sendnextchunks: chunks=%u for %s:%u (state=%d)",chunks,eptr->hostname?eptr->hostname:"unknown",eptr->masterport,eptr->registerstate);
 	if (chunks==0) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"sendnextchunks: sending end packet (type 62) for %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 		hdd_get_chunks_end();
 		buff = masterconn_create_attached_packet(eptr,CSTOMA_REGISTER,1);
 		put8bit(&buff,62);
 		eptr->registerstate = REGISTERED;
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"registration complete for %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 	} else {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"sendnextchunks: sending chunk packet (type 61) with %u chunks for %s:%u",chunks,eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 		buff = masterconn_create_attached_packet(eptr,CSTOMA_REGISTER,1+chunks*(8+4));
 		put8bit(&buff,61);
 		hdd_get_chunks_next_list_data(ChunksPerRegisterPacket,buff);
@@ -537,6 +539,7 @@ void masterconn_master_ack(masterconn *eptr,const uint8_t *data,uint32_t length)
 			main_exit();
 			return;
 		} else {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"masterconn_master_ack: received ACK type 0, registerstate=%d for %s:%u",eptr->registerstate,eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 			if (eptr->registerstate == UNREGISTERED || eptr->registerstate == WAITING) {
 				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"starting chunk registration for %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 				hdd_get_chunks_begin(1);
@@ -546,7 +549,7 @@ void masterconn_master_ack(masterconn *eptr,const uint8_t *data,uint32_t length)
 				}
 			}
 			if (eptr->registerstate == INPROGRESS) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"continuing chunk registration for %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"continuing chunk registration for %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 				masterconn_sendnextchunks(eptr);
 			}
 		}
@@ -1445,6 +1448,7 @@ void masterconn_get_chunk_checksum_tab(masterconn *eptr,const uint8_t *data,uint
 
 
 void masterconn_gotpacket(masterconn *eptr,uint32_t type,const uint8_t *data,uint32_t length) {
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"received packet type=%u length=%u from %s:%u (state=%d)",type,length,eptr->hostname?eptr->hostname:"unknown",eptr->masterport,eptr->registerstate);
 	switch (type) {
 		case ANTOAN_NOP:
 			break;
@@ -1501,6 +1505,7 @@ void masterconn_gotpacket(masterconn *eptr,uint32_t type,const uint8_t *data,uin
 			masterconn_get_chunk_checksum_tab(eptr,data,length);
 			break;
 		case MATOCS_MASTER_ACK:
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"received MATOCS_MASTER_ACK from %s:%u, length=%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport,length);
 			eptr->masteraddrvalid = 1;
 			masterconn_master_ack(eptr,data,length);
 			break;
