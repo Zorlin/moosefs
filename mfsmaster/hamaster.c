@@ -6,9 +6,7 @@
 #include "hamaster.h"
 #include "cfg.h"
 #include "mfslog.h"
-#include "shardmgr.h"
 #include "haconn.h"
-#include "crdtstore.h"
 #include "raftconsensus.h"
 #include "gossip.h"
 #include "gvc.h"
@@ -90,8 +88,6 @@ int ha_initialize(void) {
         int (*fn)(void);
         char *name;
     } ha_modules[] = {
-        {shardmgr_init, "shard manager"},
-        {crdtstore_init, "CRDT store"},
         {raftconsensus_init, "Raft consensus"},
         {gossip_init, "gossip protocol"},
         {gvc_init, "global version coordinator"},
@@ -125,8 +121,6 @@ void ha_terminate(void) {
     metasync_term();
     gossip_term();
     raftconsensus_term();
-    crdtstore_term();
-    shardmgr_term();
     
     if (ha_peers) {
         free(ha_peers);
