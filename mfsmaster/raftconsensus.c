@@ -43,6 +43,7 @@ static void raft_send_request_vote(void);
 static void raft_send_append_entries(raft_peer_t *peer);
 static void raft_apply_committed_entries(void);
 static void raft_become_leader(void);
+static int raft_has_minimum_peers(void);
 void raftconsensus_tick_wrapper(void);
 
 /* Get random election timeout */
@@ -72,7 +73,7 @@ int raftconsensus_init(void) {
 	/* Set initial timeouts */
 	raft_state.election_timeout = get_election_timeout();
 	raft_state.heartbeat_timeout = heartbeat_interval;
-	raft_state.last_heartbeat = 0; /* Start with 0 to trigger immediate election */
+	raft_state.last_heartbeat = monotonic_useconds() / 1000; /* Don't trigger immediate election */
 	
 	/* No leader initially */
 	raft_state.current_leader = 0;
@@ -87,9 +88,8 @@ int raftconsensus_init(void) {
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Raft consensus initialized: node_id=%u version=%"PRIu64,
 	        local_node_id, raft_state.current_version);
 	
-	/* Start election immediately */
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Starting initial election");
-	raft_start_election();
+	/* Don't start election immediately - wait for peers to connect */
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Waiting for peers to connect before starting election");
 	
 	return 0;
 }
@@ -280,11 +280,15 @@ void raft_start_election(void) {
 	/* Reset election timeout */
 	raft_state.election_timeout = get_election_timeout();
 	
-	/* Check if we have peers */
-	if (raft_state.peer_count == 0) {
-		/* No peers - become leader immediately */
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "No peers configured - becoming leader immediately");
-		raft_become_leader();
+	/* Calculate quorum needed */
+	uint32_t total_nodes = raft_state.peer_count + 1; /* peers + self */
+	uint32_t quorum_needed = (total_nodes / 2) + 1;
+	
+	/* Check if we have quorum */
+	if (raft_state.peer_count < (quorum_needed - 1)) {
+		/* Not enough peers connected for quorum */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Not enough peers for quorum - need %u peers, have %u", 
+		        quorum_needed - 1, raft_state.peer_count);
 		pthread_mutex_unlock(&raft_mutex);
 		return;
 	}
@@ -645,6 +649,14 @@ void raftconsensus_tick(double now) {
 		case RAFT_STATE_FOLLOWER:
 			/* Check election timeout */
 			if (now_ms - raft_state.last_heartbeat > raft_state.election_timeout) {
+				/* Check if we have minimum peers before starting election */
+				if (!raft_has_minimum_peers()) {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Election timeout but insufficient peers (%u connected, need at least %u)",
+					        raft_state.peer_count, cfg_getuint32("RAFT_MIN_PEERS", 2));
+					/* Reset timeout to check again later */
+					raft_state.last_heartbeat = now_ms;
+					break;
+				}
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Election timeout - starting election (last_heartbeat=%"PRIu64", now=%"PRIu64", timeout=%"PRIu64")",
 				        raft_state.last_heartbeat, now_ms, raft_state.election_timeout);
 				pthread_mutex_unlock(&raft_mutex);
@@ -696,6 +708,7 @@ void raftconsensus_tick_wrapper(void) {
 /* Add peer */
 int raft_add_peer(uint32_t node_id, const char *host, uint16_t port) {
 	raft_peer_t *peer;
+	int first_time_has_quorum = 0;
 	
 	pthread_mutex_lock(&raft_mutex);
 	
@@ -707,6 +720,12 @@ int raft_add_peer(uint32_t node_id, const char *host, uint16_t port) {
 			return 0; /* Already exists */
 		}
 		peer = peer->next;
+	}
+	
+	/* Check if we're about to reach minimum peers for the first time */
+	if (raft_state.peer_count < cfg_getuint32("RAFT_MIN_PEERS", 2) &&
+	    raft_state.peer_count + 1 >= cfg_getuint32("RAFT_MIN_PEERS", 2)) {
+		first_time_has_quorum = 1;
 	}
 	
 	/* Create new peer */
@@ -728,9 +747,19 @@ int raft_add_peer(uint32_t node_id, const char *host, uint16_t port) {
 	raft_state.peers = peer;
 	raft_state.peer_count++;
 	
-	pthread_mutex_unlock(&raft_mutex);
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Added Raft peer %u at %s:%u (total peers: %u)",
+	        node_id, host, port, raft_state.peer_count);
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Added Raft peer %u at %s:%u", node_id, host, port);
+	/* If we just reached quorum and haven't had an election yet, trigger one */
+	if (first_time_has_quorum && raft_state.state == RAFT_STATE_FOLLOWER && 
+	    raft_state.current_term == 0) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Reached minimum peers (%u) - triggering first election",
+		        raft_state.peer_count);
+		/* Reset last heartbeat to trigger election in next tick */
+		raft_state.last_heartbeat = 0;
+	}
+	
+	pthread_mutex_unlock(&raft_mutex);
 	
 	return 0;
 }
@@ -766,6 +795,18 @@ uint64_t raft_get_current_version(void) {
 	pthread_mutex_unlock(&raft_mutex);
 	
 	return version;
+}
+
+/* Check if we have minimum peers for quorum */
+static int raft_has_minimum_peers(void) {
+	uint32_t min_peers;
+	
+	/* Already holding raft_mutex */
+	
+	/* Get minimum required peers from config (default 2 for 3-node cluster) */
+	min_peers = cfg_getuint32("RAFT_MIN_PEERS", 2);
+	
+	return (raft_state.peer_count >= min_peers);
 }
 
 /* Get statistics */
