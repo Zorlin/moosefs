@@ -194,6 +194,8 @@ typedef struct matocsserventry {
 
 	struct csdbentry *csptr;
 
+	uint8_t ha_read_only;		// In HA mode: 1 if follower (read-only), 0 if leader (full access)
+
 	struct matocsserventry *next;
 } matocsserventry;
 
@@ -2615,41 +2617,19 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 				eptr->timeout = get16bit(&data);
 			}
 			
-			/* In HA mode, only the leader should accept chunkserver registrations */
-			if (ha_mode_enabled() && !raft_is_leader()) {
-				uint32_t leader_id = raft_get_leader();
-				uint32_t my_node_id = ha_get_node_id();
-				uint32_t leader_ip = 0;
-				uint16_t leader_port = 0;
-				
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Chunkserver registration rejected - not leader (my_node=%u, leader=%u)", my_node_id, leader_id);
-				
-				/* Sanity check - if raft_get_leader returns our node ID, we're actually the leader */
-				if (leader_id == my_node_id) {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Chunkserver registration: raft_is_leader/raft_get_leader inconsistency - we are actually the leader, accepting registration");
-					/* Continue with normal registration processing */
+			/* In HA mode, all masters accept chunkserver connections for status/monitoring
+			 * but only leader can perform chunk operations */
+			if (ha_mode_enabled()) {
+				if (!raft_is_leader()) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Chunkserver registration on follower - accepting for monitoring only");
+					/* Mark this connection as read-only */
+					eptr->ha_read_only = 1;
 				} else {
-					/* Try to get leader connection information for redirection */
-					if (leader_id != 0 && haconn_get_leader_info(leader_id, &leader_ip, &leader_port) == 0) {
-						/* Send custom redirection response with leader info */
-						uint8_t *ptr = matocsserv_create_packet(eptr, MATOCS_HA_LEADER_REDIRECT, 6);
-						put32bit(&ptr, leader_ip);      /* Leader IP address */
-						put16bit(&ptr, leader_port);    /* Leader port */
-						mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Chunkserver redirection: leader is at %u.%u.%u.%u:%u - closing connection", 
-						        (leader_ip >> 24) & 0xFF, (leader_ip >> 16) & 0xFF, (leader_ip >> 8) & 0xFF, leader_ip & 0xFF, leader_port);
-						/* Close connection after redirect to force chunkserver to reconnect to leader */
-						eptr->mode = FINISH;
-						return;
-					} else {
-						/* Send standard rejection response */
-						uint8_t *ptr = matocsserv_create_packet(eptr, MATOCS_MASTER_ACK, 1);
-						put8bit(&ptr, 1); /* Error code */
-						mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"Chunkserver redirection: leader info not available (leader_id=%u)", leader_id);
-						/* Close connection since we can't provide service */
-						eptr->mode = KILL;
-						return;
-					}
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Chunkserver registration on leader - full access");
+					eptr->ha_read_only = 0;
 				}
+			} else {
+				eptr->ha_read_only = 0; /* Non-HA mode, full access */
 			}
 			
 			if (sclass_ec_version()>0 && eptr->version<VERSION2INT(4,0,0)) {
@@ -2863,6 +2843,26 @@ void matocsserv_space(matocsserventry *eptr,const uint8_t *data,uint32_t length)
 		eptr->todeltotalspace = get64bit(&data);
 		if (length==40) {
 			eptr->todelchunkscount = get32bit(&data);
+		}
+	}
+	
+	/* Update CRDT with new space information */
+	if (ha_mode_enabled() && eptr->servip && eptr->servport) {
+		mfs_chunkserver_t cs;
+		crdt_store_t *store = crdtstore_get_main_store();
+		
+		if (store != NULL && crdtstore_get_chunkserver(store, eptr->servip, eptr->servport, &cs) == 0) {
+			/* Update space information */
+			cs.usedspace = eptr->usedspace;
+			cs.totalspace = eptr->totalspace;
+			cs.chunkscount = eptr->chunkscount;
+			cs.todelusedspace = eptr->todelusedspace;
+			cs.todeltotalspace = eptr->todeltotalspace;
+			cs.todelchunkscount = eptr->todelchunkscount;
+			
+			if (crdtstore_put_chunkserver(store, &cs) < 0) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"csdb: failed to update chunkserver space in CRDT");
+			}
 		}
 	}
 }
@@ -3598,6 +3598,7 @@ void matocsserv_serve(struct pollfd *pdesc) {
 			eptr->corr = 0.0;
 
 			eptr->csptr = NULL;
+			eptr->ha_read_only = 0;  /* Will be set during registration in HA mode */
 		}
 	}
 
