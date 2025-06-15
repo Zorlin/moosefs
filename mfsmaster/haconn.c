@@ -29,6 +29,7 @@
 #include "massert.h"
 #include "crdtstore.h"
 #include "metasync.h"
+#include "raftconsensus.h"
 
 /* MFS HA Protocol message types */
 #define MFSHA_NOP             0x1000
@@ -567,12 +568,53 @@ int haconn_init(void) {
 			char *colon = strchr(peer, ':');
 			if (colon) {
 				*colon = '\0';
-				uint16_t port = atoi(colon + 1);
+				/* Ignore port from config - always use HA port 9430 */
+				uint16_t port = 9430;
 				
-				/* Skip self */
-				if (port != listen_port) {
-					/* TODO: Implement actual connection establishment */
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: will connect to peer %s:%u", peer, port);
+				/* Skip self - check if it's not our own address */
+				int is_self = 0;
+				if (strcmp(peer, "localhost") == 0 || strcmp(peer, "127.0.0.1") == 0) {
+					if (port == listen_port) {
+						is_self = 1;
+					}
+				} else {
+					/* Check if this peer matches our hostname and port */
+					char myhostname[256];
+					if (gethostname(myhostname, sizeof(myhostname)) == 0) {
+						char *dot = strchr(myhostname, '.');
+						if (dot) *dot = '\0'; /* Compare short hostname */
+						
+						if (strstr(peer, myhostname) != NULL && port == listen_port) {
+							is_self = 1;
+						}
+					}
+				}
+				
+				if (!is_self) {
+					/* Connect to peer */
+					int csock = tcpsocket();
+					if (csock >= 0) {
+						uint32_t ip = 0;
+						uint16_t resolved_port = 0;
+						if (tcpresolve(peer, NULL, &ip, &resolved_port, 0) >= 0 && ip > 0) {
+							tcpnonblock(csock);
+							if (tcpnumconnect(csock, ip, port) >= 0) {
+								tcpnodelay(csock);
+								if (haconn_new(csock) != NULL) {
+									mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: initiated connection to peer %s:%u", peer, port);
+								} else {
+									tcpclose(csock);
+									mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to create connection structure for %s:%u", peer, port);
+								}
+							} else {
+								tcpclose(csock);
+								mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to connect to peer %s:%u", peer, port);
+							}
+						} else {
+							tcpclose(csock);
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: failed to resolve peer %s", peer);
+						}
+					}
 				}
 			}
 			peer = strtok(NULL, ",");

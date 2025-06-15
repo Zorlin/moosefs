@@ -127,7 +127,8 @@ raft_shard_t* raft_create_shard(uint32_t shard_id, raft_peer_t *peers, uint32_t 
 	base_timeout = cfg_getuint32("HA_RAFT_ELECTION_TIMEOUT", 1000);
 	shard->election_timeout = get_election_timeout(base_timeout);
 	shard->heartbeat_timeout = cfg_getuint32("HA_RAFT_HEARTBEAT_TIMEOUT", 100);
-	shard->last_heartbeat = monotonic_useconds() / 1000;
+	/* Set last_heartbeat to 0 to trigger immediate election */
+	shard->last_heartbeat = 0;
 	
 	/* Copy peers */
 	shard->peers = NULL;
@@ -382,6 +383,7 @@ void raft_tick(void) {
 	raft_shard_t *shard;
 	uint64_t current_time;
 	hlc_timestamp_t now_hlc;
+	static uint64_t tick_count = 0;
 	
 	current_time = monotonic_useconds() / 1000;
 	
@@ -391,12 +393,19 @@ void raft_tick(void) {
 	
 	pthread_mutex_lock(&raft_mutex);
 	
+	/* Log every 200 ticks (10 seconds) */
+	if ((tick_count++ % 200) == 0) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "raft_tick: running, current_time=%"PRIu64, current_time);
+	}
+	
 	shard = shards;
 	while (shard != NULL) {
 		switch (shard->state) {
 			case RAFT_STATE_FOLLOWER:
 				/* Check for election timeout */
 				if (current_time - shard->last_heartbeat > shard->election_timeout) {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_tick: triggering election for shard %"PRIu32" (timeout=%"PRIu64"ms elapsed=%"PRIu64"ms)", 
+					       shard->shard_id, shard->election_timeout, current_time - shard->last_heartbeat);
 					raft_start_election(shard);
 				}
 				break;
