@@ -75,6 +75,8 @@
 
 #include "cfg.h"
 #include "main.h"
+#include "hamaster.h"
+#include "raftconsensus.h"
 
 #define META_SOCKET_MSECTO 10000
 #define META_SOCKET_BUFFER_SIZE 0x10000
@@ -1763,7 +1765,18 @@ int meta_loadall(void) {
 
 uint64_t meta_version_inc(void) {
 	if (ha_mode_enabled()) {
-		/* In HA mode, use GVC for version allocation */
+		/* In HA mode, only leaders can allocate versions */
+		if (!raft_is_leader()) {
+			/* Followers should not allocate versions - they receive operations via Raft */
+			static uint64_t last_warning = 0;
+			uint64_t now = (uint64_t)time(NULL);
+			if (now - last_warning > 10) {  /* Log warning at most every 10 seconds */
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"meta_version_inc: follower skipping version allocation - operations should come via Raft");
+				last_warning = now;
+			}
+			return 0;
+		}
+		/* We are the leader - use GVC for version allocation */
 		uint64_t new_version = gvc_get_next_version();
 		if (new_version > 0) {
 			metaversion = new_version;
