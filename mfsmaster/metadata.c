@@ -1789,10 +1789,10 @@ uint64_t meta_version_inc(void) {
 			static uint64_t last_warning = 0;
 			uint64_t now = (uint64_t)time(NULL);
 			if (now - last_warning > 10) {  /* Log warning at most every 10 seconds */
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"meta_version_inc: follower skipping version allocation - operations should come via Raft");
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"meta_version_inc: follower skipping version allocation (current version=%"PRIu64") - operations should come via Raft", metaversion);
 				last_warning = now;
 			}
-			return 0;
+			return metaversion; /* Return current version instead of 0 */
 		}
 		/* We are the leader - use GVC for version allocation */
 		uint64_t new_version = gvc_get_next_version();
