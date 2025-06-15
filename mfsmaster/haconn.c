@@ -28,6 +28,7 @@
 #include "datapack.h"
 #include "crc.h"
 #include "massert.h"
+#include "main.h"
 #include "crdtstore.h"
 #include "gvc.h"
 #include <pthread.h>
@@ -677,6 +678,9 @@ static void haconn_parse(haconn_t *conn) {
 
 /* Public interface functions */
 
+/* Forward declaration */
+static void haconn_retry_peer_connections(void);
+
 int haconn_init(void) {
 	int sock;
 	
@@ -723,6 +727,10 @@ int haconn_init(void) {
 	/* Register with main poll loop */
 	main_poll_register(haconn_desc, haconn_serve);
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: registered with main poll loop");
+	
+	/* Register periodic retry of peer connections */
+	main_time_register(5, 0, haconn_retry_peer_connections);  /* Check every 5 seconds */
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: registered periodic peer connection retry");
 	
 	/* Parse peers_config and establish connections */
 	if (peers_config && strlen(peers_config) > 0) {
@@ -789,6 +797,109 @@ int haconn_init(void) {
 	}
 	
 	return 0;
+}
+
+/* Periodic retry of peer connections */
+static void haconn_retry_peer_connections(void) {
+	haconn_t *conn;
+	uint32_t connected_count = 0;
+	uint32_t expected_peers = 0;
+	
+	if (!peers_config || strlen(peers_config) == 0) {
+		return;
+	}
+	
+	/* Count connected peers */
+	for (conn = haconn_head; conn; conn = conn->next) {
+		if (conn->mode == HACONN_CONNECTED) {
+			connected_count++;
+		}
+	}
+	
+	/* Count expected peers (total nodes - 1 for self) */
+	char *peers_copy = strdup(peers_config);
+	char *peer = strtok(peers_copy, ",");
+	while (peer) {
+		expected_peers++;
+		peer = strtok(NULL, ",");
+	}
+	free(peers_copy);
+	
+	/* Adjust for self */
+	if (expected_peers > 0) {
+		expected_peers--;
+	}
+	
+	/* If we have all expected peers, nothing to do */
+	if (connected_count >= expected_peers) {
+		return;
+	}
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: retrying peer connections (connected=%u, expected=%u)", 
+	        connected_count, expected_peers);
+	
+	/* Try to connect to missing peers */
+	peers_copy = strdup(peers_config);
+	peer = strtok(peers_copy, ",");
+	uint32_t peer_position = 1;
+	
+	while (peer) {
+		char *colon = strchr(peer, ':');
+		if (colon) {
+			*colon = '\0';
+		}
+		
+		uint16_t port = listen_port;
+		int is_self = (peer_position == my_nodeid);
+		
+		if (!is_self) {
+			/* Check if we already have a connection to this peer */
+			uint32_t ip = 0;
+			uint16_t resolved_port = 0;
+			if (tcpresolve(peer, NULL, &ip, &resolved_port, 0) >= 0 && ip > 0) {
+				/* Check if already connected */
+				int already_connected = 0;
+				for (conn = haconn_head; conn; conn = conn->next) {
+					if (conn->peerip == ip && conn->peerport == port && 
+					    (conn->mode == HACONN_CONNECTED || conn->mode == HACONN_CONNECTING || 
+					     conn->mode == HACONN_HANDSHAKE)) {
+						already_connected = 1;
+						break;
+					}
+				}
+				
+				if (!already_connected) {
+					/* Try to connect */
+					int csock = tcpsocket();
+					if (csock >= 0) {
+						mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: retrying connection to peer %s:%u", peer, port);
+						tcpnonblock(csock);
+						int connect_result = tcpnumconnect(csock, ip, port);
+						if (connect_result >= 0 || errno == EINPROGRESS) {
+							tcpnodelay(csock);
+							haconn_t *new_conn = haconn_new_outgoing(csock);
+							if (new_conn != NULL) {
+								new_conn->peerip = ip;
+								new_conn->peerport = port;
+								mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: retry initiated connection to peer %s:%u", peer, port);
+							} else {
+								tcpclose(csock);
+							}
+						} else {
+							tcpclose(csock);
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: retry failed to connect to peer %s:%u - %s", 
+							        peer, port, strerror(errno));
+						}
+					}
+				}
+			}
+		}
+		
+		peer = strtok(NULL, ",");
+		peer_position++;
+	}
+	
+	free(peers_copy);
 }
 
 void haconn_term(void) {
