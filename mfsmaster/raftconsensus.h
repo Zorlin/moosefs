@@ -151,7 +151,10 @@ int raft_remove_peer(uint32_t node_id);
 
 /* Leader operations */
 int raft_is_leader(void);
+int raft_is_candidate(void);
+int raft_is_follower(void);
 uint32_t raft_get_leader(void);
+uint32_t raft_get_leader_ip(void);
 int raft_has_valid_lease(void);
 int raft_transfer_leadership(uint32_t target_node);
 

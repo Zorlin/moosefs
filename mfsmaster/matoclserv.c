@@ -79,6 +79,12 @@
 #include "shardmgr.h"
 #include "raftconsensus.h"
 
+// HA states matching mfscli.py definitions
+#define STATE_DUMMY    0
+#define STATE_LEADER   1
+#define STATE_ELECT    2
+#define STATE_FOLLOWER 3
+
 #define MaxPacketSize CLTOMA_MAXPACKETSIZE
 
 // matoclserventry.mode
@@ -1459,12 +1465,29 @@ void matoclserv_info(matoclserventry *eptr,const uint8_t *data,uint32_t length) 
 	put32bit(&ptr,lsstore);
 	put32bit(&ptr,lstime);
 	put8bit(&ptr,lsstat);
-	put8bit(&ptr,0xFF);
-	put8bit(&ptr,0xFF);
-	put8bit(&ptr,0xFF);
-	put8bit(&ptr,0xFF);
-	put32bit(&ptr,0);
-	put32bit(&ptr,0);
+	if (ha_mode_enabled()) {
+		uint8_t ha_state = STATE_DUMMY;
+		if (raft_is_leader()) {
+			ha_state = STATE_LEADER;
+		} else if (raft_is_candidate()) {
+			ha_state = STATE_ELECT;
+		} else if (raft_is_follower()) {
+			ha_state = STATE_FOLLOWER;
+		}
+		put8bit(&ptr,ha_state);    // workingstate
+		put8bit(&ptr,ha_state);    // nextstate
+		put8bit(&ptr,ha_state);    // stablestate
+		put8bit(&ptr,0);           // sync
+		put32bit(&ptr,raft_get_leader_ip());  // leaderip
+		put32bit(&ptr,0);          // changetime
+	} else {
+		put8bit(&ptr,0xFF);
+		put8bit(&ptr,0xFF);
+		put8bit(&ptr,0xFF);
+		put8bit(&ptr,0xFF);
+		put32bit(&ptr,0);
+		put32bit(&ptr,0);
+	}
 	put64bit(&ptr,meta_version());
 	put64bit(&ptr,exports_checksum());
 	put64bit(&ptr,meta_get_id());

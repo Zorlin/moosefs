@@ -152,6 +152,56 @@ uint32_t raft_get_leader(void) {
 	return leader;
 }
 
+/* Check if we are candidate */
+int raft_is_candidate(void) {
+	int is_candidate;
+	
+	pthread_mutex_lock(&raft_mutex);
+	is_candidate = (raft_state.state == RAFT_STATE_CANDIDATE);
+	pthread_mutex_unlock(&raft_mutex);
+	
+	return is_candidate;
+}
+
+/* Check if we are follower */
+int raft_is_follower(void) {
+	int is_follower;
+	
+	pthread_mutex_lock(&raft_mutex);
+	is_follower = (raft_state.state == RAFT_STATE_FOLLOWER);
+	pthread_mutex_unlock(&raft_mutex);
+	
+	return is_follower;
+}
+
+/* Get leader IP address */
+uint32_t raft_get_leader_ip(void) {
+	uint32_t leader_ip = 0;
+	raft_peer_t *peer;
+	
+	pthread_mutex_lock(&raft_mutex);
+	
+	if (raft_state.current_leader == local_node_id) {
+		/* We are the leader - return 0 to indicate local */
+		leader_ip = 0;
+	} else if (raft_state.current_leader > 0) {
+		/* Find leader peer */
+		peer = raft_state.peers;
+		while (peer) {
+			if (peer->node_id == raft_state.current_leader) {
+				/* Convert hostname to IP - for now return 0 */
+				leader_ip = 0; /* TODO: resolve peer->host to IP */
+				break;
+			}
+			peer = peer->next;
+		}
+	}
+	
+	pthread_mutex_unlock(&raft_mutex);
+	
+	return leader_ip;
+}
+
 /* Check if we have a valid lease */
 int raft_has_valid_lease(void) {
 	int valid = 0;
