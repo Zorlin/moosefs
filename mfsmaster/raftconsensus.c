@@ -291,11 +291,14 @@ void raft_start_election(raft_shard_t *shard) {
 		haconn_send_raft_broadcast(msg, msg_size);
 	}
 	
-	/* Check if we already have majority (single node cluster) */
-	if (total_nodes == 1 || shard->votes_received > total_nodes / 2) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: immediate majority for shard %"PRIu32" (votes=%"PRIu32"/%"PRIu32")", 
+	/* Check if we have majority of votes */
+	if (shard->votes_received > total_nodes / 2) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: majority achieved for shard %"PRIu32" (votes=%"PRIu32"/%"PRIu32")", 
 		       shard->shard_id, shard->votes_received, total_nodes);
 		raft_become_leader(shard);
+	} else {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: waiting for more votes for shard %"PRIu32" (votes=%"PRIu32"/%"PRIu32" needed=%"PRIu32")", 
+		       shard->shard_id, shard->votes_received, total_nodes, (total_nodes / 2) + 1);
 	}
 }
 
@@ -396,9 +399,9 @@ void raft_tick(void) {
 	
 	pthread_mutex_lock(&raft_mutex);
 	
-	/* Log every 200 ticks (10 seconds) */
-	if ((tick_count++ % 200) == 0) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "raft_tick: running, current_time=%"PRIu64, current_time);
+	/* Log every 20 ticks (1 second) for initial debugging */
+	if ((tick_count++ % 20) == 0) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_tick: running tick %"PRIu64", current_time=%"PRIu64, tick_count, current_time);
 	}
 	
 	shard = shards;
@@ -666,8 +669,9 @@ void raftconsensus_term(void) {
 /* Main loop tick function - wraps raft_tick() */
 void raftconsensus_tick_wrapper(void) {
 	static uint64_t wrapper_count = 0;
-	if ((wrapper_count++ % 200) == 0) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "raftconsensus_tick_wrapper: called %"PRIu64" times", wrapper_count);
+	wrapper_count++;
+	if ((wrapper_count % 20) == 0) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_tick_wrapper: called %"PRIu64" times", wrapper_count);
 	}
 	raft_tick();
 }
