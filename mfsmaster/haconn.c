@@ -329,6 +329,7 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				break;
 			}
 			if (length >= 1) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "haconn: received Raft request from peer %u, %u bytes", conn->peerid, length);
 				raft_handle_incoming_message(conn->peerid, data, length);
 			} else {
 				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid Raft request size");
@@ -961,6 +962,7 @@ void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length) {
 			if (ptr) {
 				memcpy(ptr, data, length);
 				sent_count++;
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_raft_broadcast: sent %u bytes to peer %u", length, conn->peerid);
 			}
 		}
 	}
