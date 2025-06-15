@@ -3646,12 +3646,15 @@ void matocsserv_serve(struct pollfd *pdesc) {
 		} else {
 			/* In HA mode, only the leader should accept new chunkserver connections */
 			if (ha_mode_enabled() && !raft_is_leader()) {
+				uint32_t leader_id = raft_get_leader();
 				uint32_t leader_ip;
 				uint16_t leader_port;
 				
-				if (raftconsensus_get_leader_address(&leader_ip, &leader_port) == 0) {
+				if (leader_id != 0 && haconn_get_leader_info(leader_id, &leader_ip, &leader_port) == 0) {
 					char stripbuf[32];
 					univmakestrip(stripbuf, leader_ip);
+					/* Use chunkserver port (9422) instead of client port */
+					leader_port = 9422;
 					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"redirecting chunkserver to leader at %s:%u",
 					        stripbuf, leader_port);
 					/* Send a redirect message and close the connection */
