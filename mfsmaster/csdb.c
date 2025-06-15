@@ -1100,7 +1100,7 @@ int csdb_init(void) {
 }
 
 /* Find chunkserver entry by IP and port */
-static csdbentry* csdb_find_entry(uint32_t ip, uint16_t port) {
+csdbentry* csdb_find_entry(uint32_t ip, uint16_t port) {
 	uint32_t hash = CSDBHASHFN(ip, port);
 	csdbentry *csptr;
 	
@@ -1110,6 +1110,18 @@ static csdbentry* csdb_find_entry(uint32_t ip, uint16_t port) {
 		}
 	}
 	return NULL;
+}
+
+/* Force clear any existing connection to allow reconnection */
+void csdb_force_reconnection(uint32_t ip, uint16_t port) {
+	csdbentry *csptr = csdb_find_entry(ip, port);
+	
+	if (csptr != NULL && csptr->eptr != NULL) {
+		char strip[STRIPSIZE];
+		univmakestrip(strip, ip);
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb: forcing disconnection of %s:%"PRIu16" to allow reconnection", strip, port);
+		csptr->eptr = NULL;
+	}
 }
 
 /* Sync chunkserver list from CRDT store in HA mode */

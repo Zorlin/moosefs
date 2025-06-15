@@ -2675,10 +2675,25 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 				eptr->mode = KILL;
 				return;
 			}
-			if ((eptr->csptr=csdb_new_connection(eptr->servip,eptr->servport,csid,eptr))==NULL) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"can't accept chunkserver %s",eptr->servdesc);
-				eptr->mode = KILL;
-				return;
+			eptr->csptr = csdb_new_connection(eptr->servip,eptr->servport,csid,eptr);
+			if (eptr->csptr == NULL) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"can't accept chunkserver %s - checking for existing connection",eptr->servdesc);
+				
+				/* In HA mode, this might be a legitimate connection from a CS to a follower
+				 * The CS might already be registered with another master via CRDT sync
+				 * Force clear any stale connections and retry
+				 */
+				if (ha_mode_enabled() && !raft_is_leader()) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"follower: forcing reconnection for chunkserver %s",eptr->servdesc);
+					csdb_force_reconnection(eptr->servip, eptr->servport);
+					/* Try again */
+					eptr->csptr = csdb_new_connection(eptr->servip,eptr->servport,csid,eptr);
+				}
+				
+				if (eptr->csptr == NULL) {
+					eptr->mode = KILL;
+					return;
+				}
 			}
 			
 			/* Sync chunkserver registration through CRDT if HA mode is enabled */

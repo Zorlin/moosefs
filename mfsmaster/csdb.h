@@ -48,6 +48,11 @@ int csdb_load(bio *fd,uint8_t mver,int ignoreflag);
 int csdb_init(void);
 void csdb_sync_from_crdt(void);
 uint8_t csdb_mr_op(uint8_t csop,uint32_t ip,uint16_t port,uint32_t arg);
+
+/* HA support - find entry without modifying it */
+typedef struct csdbentry csdbentry;
+csdbentry* csdb_find_entry(uint32_t ip, uint16_t port);
+void csdb_force_reconnection(uint32_t ip, uint16_t port);
 #define csdb_mr_csadd(x,y) csdb_mr_op(0,x,y,0)
 #define csdb_mr_csdel(x,y) csdb_mr_op(1,x,y,0)
 // uint32_t csdb_getdisconnecttime(void);

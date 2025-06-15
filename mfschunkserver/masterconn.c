@@ -2046,6 +2046,13 @@ void masterconn_disconnection_check(void) {
 			if (eptr->registerstate == UNREGISTERED && eptr->mode==KILL) {
 				eptr->masteraddrvalid = 0;
 			}
+			/* Reset registration state so we'll re-register when reconnected */
+			if (eptr->registerstate == REGISTERED) {
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"resetting registration state for reconnection to master %u.%u.%u.%u:%u",
+					(eptr->masterip>>24)&0xFF, (eptr->masterip>>16)&0xFF, 
+					(eptr->masterip>>8)&0xFF, eptr->masterip&0xFF, eptr->masterport);
+				eptr->registerstate = UNREGISTERED;
+			}
 			eptr->mode = FREE;
 		}
 	}
