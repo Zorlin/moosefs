@@ -680,7 +680,7 @@ static void haconn_parse(haconn_t *conn) {
 int haconn_init(void) {
 	int sock;
 	
-	listen_port = cfg_getuint16("MFSHA_PORT", 9430);
+	listen_port = cfg_getuint16("HA_CONN_LISTEN_PORT", 9430);
 	my_nodeid = cfg_getuint32("MFSHA_NODE_ID", 1);
 	peers_config = cfg_getstr("MFSHA_PEERS", "");
 	
@@ -716,8 +716,8 @@ int haconn_init(void) {
 			char *colon = strchr(peer, ':');
 			if (colon) {
 				*colon = '\0';
-				/* Ignore port from config - always use HA port 9430 */
-				uint16_t port = 9430;
+				/* Parse port from peer string */
+				uint16_t port = (uint16_t)strtoul(colon + 1, NULL, 10);
 				
 				/* Skip self based on node ID matching peer position */
 				int is_self = (peer_position == my_nodeid);

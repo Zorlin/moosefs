@@ -473,8 +473,13 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 			
 			int vote_granted = 0;
 			
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "RequestVote from node %u term %"PRIu64" (our term %"PRIu64", our state %d)",
+			        candidate_id, term, raft_state.current_term, raft_state.state);
+			
 			/* Update term if necessary */
 			if (term > raft_state.current_term) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "RequestVote: updating term from %"PRIu64" to %"PRIu64,
+				        raft_state.current_term, term);
 				raft_state.current_term = term;
 				raft_state.voted_for = 0;
 				raft_state.state = RAFT_STATE_FOLLOWER;
@@ -489,6 +494,9 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				raft_log_entry_t *last = raft_state.log_tail;
 				uint64_t our_last_term = last ? last->term : 0;
 				uint64_t our_last_index = last ? last->index : 0;
+				
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Vote check: voted_for=%u, candidate=%u, their_log=%"PRIu64":%"PRIu64", our_log=%"PRIu64":%"PRIu64,
+				        raft_state.voted_for, candidate_id, last_log_term, last_log_index, our_last_term, our_last_index);
 				
 				if (last_log_term > our_last_term ||
 				    (last_log_term == our_last_term && last_log_index >= our_last_index)) {
@@ -538,9 +546,17 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				
 				/* Check if we have majority */
 				uint32_t majority = (raft_state.peer_count + 1) / 2 + 1;
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Vote granted from node %u - votes=%u/%u needed=%u",
+				        from_node, raft_state.votes_received, raft_state.peer_count + 1, majority);
+				
 				if (raft_state.votes_received >= majority) {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Won election with %u votes out of %u nodes",
+					        raft_state.votes_received, raft_state.peer_count + 1);
 					raft_become_leader();
 				}
+			} else {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Vote response: term=%"PRIu64" current=%"PRIu64" granted=%d from node %u",
+				        term, raft_state.current_term, vote_granted, from_node);
 			}
 			break;
 		}
@@ -567,6 +583,10 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 			
 			/* Reset election timeout on valid leader message */
 			if (term == raft_state.current_term) {
+				if (raft_state.state == RAFT_STATE_CANDIDATE) {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Stepping down from candidate to follower - leader %u established for term %"PRIu64,
+					        leader_id, term);
+				}
 				raft_state.state = RAFT_STATE_FOLLOWER;
 				raft_state.current_leader = leader_id;
 				raft_state.last_heartbeat = monotonic_useconds() / 1000;
