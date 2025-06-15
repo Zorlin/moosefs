@@ -191,8 +191,13 @@ uint64_t raft_get_next_version(void) {
 		}
 	} else {
 		/* Not leader */
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Not Raft leader (leader is %u) - cannot allocate version", 
-		        raft_state.current_leader);
+		if (raft_state.current_leader != 0) {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Not Raft leader (leader is %u) - cannot allocate version", 
+			        raft_state.current_leader);
+		} else {
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "No Raft leader known - cannot allocate version (state=%d)", 
+			        raft_state.state);
+		}
 	}
 	
 	pthread_mutex_unlock(&raft_mutex);
@@ -586,6 +591,10 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 				if (raft_state.state == RAFT_STATE_CANDIDATE) {
 					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Stepping down from candidate to follower - leader %u established for term %"PRIu64,
 					        leader_id, term);
+				}
+				if (raft_state.current_leader != leader_id) {
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Raft leader changed from %u to %u for term %"PRIu64,
+					        raft_state.current_leader, leader_id, term);
 				}
 				raft_state.state = RAFT_STATE_FOLLOWER;
 				raft_state.current_leader = leader_id;
