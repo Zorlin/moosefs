@@ -38,7 +38,4 @@ void haconn_send_raft_broadcast(const uint8_t *data, uint32_t length);
 /* Send changelog entry to all peers */
 void haconn_send_changelog_entry(uint64_t version, const uint8_t *data, uint32_t length);
 
-/* GVC version allocation RPC */
-int haconn_request_version_range(uint32_t leader_id, uint32_t count, uint64_t *start_version);
-
 #endif

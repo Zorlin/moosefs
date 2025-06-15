@@ -35,10 +35,10 @@ typedef enum {
 typedef struct raft_log_entry {
 	uint64_t term;        /* Term when entry was received by leader */
 	uint64_t index;       /* Index in log */
+	uint64_t version;     /* Global version number for this operation */
 	uint32_t type;        /* Entry type (metadata operation) */
-	uint32_t shard_id;    /* Shard this entry belongs to */
 	uint32_t data_size;   /* Size of data */
-	uint8_t *data;        /* Serialized CRDT operation */
+	uint8_t *data;        /* Serialized operation */
 	struct raft_log_entry *next;
 } raft_log_entry_t;
 
@@ -55,22 +55,22 @@ typedef struct raft_peer {
 
 #include "crdtstore.h" /* For hlc_timestamp_t */
 
-/* Raft shard context */
-typedef struct raft_shard {
-	uint32_t shard_id;    /* Shard identifier */
+/* Global Raft context - single group, no sharding */
+typedef struct raft_context {
 	raft_state_t state;   /* Current state (follower/candidate/leader) */
 	uint64_t current_term; /* Latest term server has seen */
 	uint32_t voted_for;   /* CandidateId that received vote in current term */
 	uint64_t commit_index; /* Index of highest log entry known to be committed */
 	uint64_t last_applied; /* Index of highest log entry applied to state machine */
+	uint64_t current_version; /* Current global version number */
 	
-	/* Leader state with HLC-based leases */
+	/* Leader state with lease optimization */
 	uint32_t current_leader;   /* Current leader node ID */
-	hlc_timestamp_t leader_lease_hlc; /* HLC when leader lease expires */
-	uint64_t leader_lease_epoch; /* Leader lease epoch for validation */
+	uint64_t leader_lease_expiry; /* When leader lease expires (monotonic time) */
+	uint64_t lease_duration;   /* Lease duration in seconds (e.g., 30s) */
 	
-	/* Leader state */
-	raft_peer_t *peers;   /* List of peers in this shard */
+	/* Peer management */
+	raft_peer_t *peers;   /* List of peers (other masters) */
 	uint32_t peer_count;  /* Number of peers */
 	uint32_t votes_received; /* Votes received in current election */
 	
@@ -84,9 +84,7 @@ typedef struct raft_shard {
 	uint64_t heartbeat_timeout; /* Heartbeat timeout (ms) */
 	uint64_t last_heartbeat; /* Last heartbeat received */
 	uint64_t election_start; /* When current election started */
-	
-	struct raft_shard *next;
-} raft_shard_t;
+} raft_context_t;
 
 /* Raft message types */
 typedef enum {
@@ -129,7 +127,6 @@ typedef struct {
 /* Raft message wrapper */
 typedef struct {
 	raft_msg_type_t type;
-	uint32_t shard_id;
 	union {
 		raft_request_vote_t request_vote;
 		raft_request_vote_response_t request_vote_response;
@@ -142,20 +139,22 @@ typedef struct {
 int raftconsensus_init(void);
 void raftconsensus_term(void);
 
-/* Shard management */
-raft_shard_t* raft_create_shard(uint32_t shard_id, raft_peer_t *peers, uint32_t peer_count);
-void raft_destroy_shard(raft_shard_t *shard);
-int raft_add_peer(raft_shard_t *shard, uint32_t node_id, const char *host, uint16_t port);
-int raft_remove_peer(raft_shard_t *shard, uint32_t node_id);
+/* Peer management */
+int raft_add_peer(uint32_t node_id, const char *host, uint16_t port);
+int raft_remove_peer(uint32_t node_id);
 
-/* Leader lock operations */
-int raft_is_leader(uint32_t shard_id);
-uint32_t raft_get_leader(uint32_t shard_id);
-int raft_transfer_leadership(uint32_t shard_id, uint32_t target_node);
+/* Leader operations */
+int raft_is_leader(void);
+uint32_t raft_get_leader(void);
+int raft_has_valid_lease(void);
+int raft_transfer_leadership(uint32_t target_node);
 
 /* Log operations */
-int raft_append_entry(uint32_t shard_id, uint32_t type, const void *data, uint32_t data_size);
-int raft_commit_entries(uint32_t shard_id, uint64_t commit_index);
+int raft_append_entry(uint32_t type, const void *data, uint32_t data_size, uint64_t version);
+int raft_commit_entries(uint64_t commit_index);
+
+/* Version management */
+uint64_t raft_get_next_version(void);
 
 /* Message handling */
 int raft_handle_message(const raft_message_t *msg, uint32_t from_node);
@@ -166,8 +165,8 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 void raft_tick(void); /* Called periodically to handle timeouts */
 void raftconsensus_tick(double now); /* Main loop periodic maintenance */
 void raftconsensus_reload(void); /* Configuration reload */
-void raft_start_election(raft_shard_t *shard);
-void raft_send_heartbeats(raft_shard_t *shard);
+void raft_start_election(void);
+void raft_send_heartbeats(void);
 
 /* Network integration */
 void raftconsensus_desc(struct pollfd *pdesc, uint32_t *ndesc);
@@ -175,20 +174,21 @@ void raftconsensus_serve(struct pollfd *pdesc);
 void raftconsensus_info(FILE *fd);
 
 /* State queries */
-raft_state_t raft_get_state(uint32_t shard_id);
-uint64_t raft_get_term(uint32_t shard_id);
-uint64_t raft_get_commit_index(uint32_t shard_id);
+raft_state_t raft_get_state(void);
+uint64_t raft_get_term(void);
+uint64_t raft_get_commit_index(void);
+uint64_t raft_get_current_version(void);
 
 /* Persistence */
-int raft_save_state(raft_shard_t *shard);
-int raft_load_state(raft_shard_t *shard);
+int raft_save_state(void);
+int raft_load_state(void);
 
 /* Statistics */
 typedef struct {
-	uint32_t shard_count;
-	uint32_t leader_count;
-	uint32_t follower_count;
-	uint32_t candidate_count;
+	raft_state_t current_state;
+	uint32_t current_leader;
+	uint64_t current_term;
+	uint64_t current_version;
 	uint64_t total_log_entries;
 	uint64_t committed_entries;
 	uint32_t active_peers;

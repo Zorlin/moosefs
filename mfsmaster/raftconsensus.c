@@ -1,18 +1,7 @@
 /*
  * Copyright (C) 2025 MooseFS High Availability Extension
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, version 2.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02111-1301, USA.
+ * 
+ * Simplified Raft implementation with single global leader
  */
 
 #ifdef HAVE_CONFIG_H
@@ -33,168 +22,94 @@
 #include "massert.h"
 #include "clocks.h"
 #include "random.h"
-#include "crdtstore.h"
 #include "haconn.h"
 #include "datapack.h"
 #include "hamaster.h"
 #include "main.h"
+#include "metadata.h"
 
-static raft_shard_t *shards = NULL;
+/* Global Raft state - single group, no sharding */
+static raft_context_t raft_state;
 static uint32_t local_node_id = 0;
 static pthread_mutex_t raft_mutex = PTHREAD_MUTEX_INITIALIZER;
-static hlc_timestamp_t global_hlc;
-static uint64_t leader_lease_duration = 30000; /* 30 second leader leases */
-static uint32_t total_nodes = 3; /* Total nodes in cluster - should be from config */
+
+/* Configuration */
+static uint64_t election_timeout_base = 1000;  /* 1 second base */
+static uint64_t heartbeat_interval = 100;      /* 100ms heartbeats */
+static uint64_t lease_duration = 30;           /* 30 second lease */
 
 /* Forward declarations */
+static void raft_send_request_vote(void);
+static void raft_send_append_entries(raft_peer_t *peer);
+static void raft_apply_committed_entries(void);
 void raftconsensus_tick_wrapper(void);
 
-/* Random election timeout between min and max */
-static uint64_t get_election_timeout(uint64_t base_timeout) {
-	return base_timeout + (rndu32_ranged(base_timeout / 2));
+/* Get random election timeout */
+static uint64_t get_election_timeout(void) {
+	return election_timeout_base + (rndu32_ranged(election_timeout_base / 2));
 }
 
-/* Find shard by ID */
-static raft_shard_t* find_shard(uint32_t shard_id) {
-	raft_shard_t *shard = shards;
-	
-	while (shard != NULL) {
-		if (shard->shard_id == shard_id) {
-			return shard;
-		}
-		shard = shard->next;
-	}
-	
-	return NULL;
-}
-
-/* Become leader for a shard */
-static void raft_become_leader(raft_shard_t *shard) {
-	hlc_timestamp_t now_hlc;
-	
-	if (shard == NULL) {
-		return;
-	}
-	
-	/* Transition to leader */
-	shard->state = RAFT_STATE_LEADER;
-	shard->current_leader = local_node_id;
-	shard->votes_received = 0;
-	
-	/* Set leader lease using HLC */
-	hlc_init(&now_hlc);
-	hlc_update(&now_hlc, &global_hlc);
-	shard->leader_lease_hlc = now_hlc;
-	shard->leader_lease_hlc.physical_time += leader_lease_duration * 1000; /* Convert ms to us */
-	shard->leader_lease_epoch++;
-	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_become_leader: became leader for shard %"PRIu32" term %"PRIu64" lease_epoch %"PRIu64, 
-	       shard->shard_id, shard->current_term, shard->leader_lease_epoch);
-	
-	/* Send initial heartbeats */
-	raft_send_heartbeats(shard);
-}
-
-/* Create new raft shard */
-raft_shard_t* raft_create_shard(uint32_t shard_id, raft_peer_t *peers, uint32_t peer_count) {
-	raft_shard_t *shard;
-	raft_peer_t *peer;
-	uint32_t i;
-	uint64_t base_timeout;
-	
-	shard = malloc(sizeof(raft_shard_t));
-	if (shard == NULL) {
-		return NULL;
-	}
-	
-	memset(shard, 0, sizeof(raft_shard_t));
-	
-	shard->shard_id = shard_id;
-	shard->state = RAFT_STATE_FOLLOWER;
-	shard->current_term = 0;
-	shard->voted_for = 0;
-	shard->current_leader = 0;
-	shard->votes_received = 0;
-	shard->commit_index = 0;
-	shard->last_applied = 0;
-	shard->peer_count = peer_count;
-	
-	/* Initialize HLC for leader lease */
-	hlc_init(&shard->leader_lease_hlc);
-	shard->leader_lease_epoch = 0;
-	
-	/* Set timeouts from configuration */
-	base_timeout = cfg_getuint32("HA_RAFT_ELECTION_TIMEOUT", 1000);
-	shard->election_timeout = get_election_timeout(base_timeout);
-	shard->heartbeat_timeout = cfg_getuint32("HA_RAFT_HEARTBEAT_TIMEOUT", 100);
-	/* Set last_heartbeat to 0 to trigger immediate election */
-	shard->last_heartbeat = 0;
-	
-	/* Copy peers */
-	shard->peers = NULL;
-	for (i = 0; i < peer_count && peers != NULL; i++) {
-		peer = malloc(sizeof(raft_peer_t));
-		if (peer == NULL) {
-			/* Cleanup on failure */
-			raft_destroy_shard(shard);
-			return NULL;
-		}
-		
-		peer->node_id = peers[i].node_id;
-		peer->host = strdup(peers[i].host);
-		peer->port = peers[i].port;
-		peer->next_index = 1;
-		peer->match_index = 0;
-		peer->last_contact = 0;
-		
-		peer->next = shard->peers;
-		shard->peers = peer;
-	}
-	
-	/* Add to global shard list */
+/* Initialize Raft consensus */
+int raftconsensus_init(void) {
 	pthread_mutex_lock(&raft_mutex);
-	shard->next = shards;
-	shards = shard;
+	
+	/* Initialize state */
+	memset(&raft_state, 0, sizeof(raft_state));
+	raft_state.state = RAFT_STATE_FOLLOWER;
+	raft_state.current_term = 0;
+	raft_state.voted_for = 0;
+	raft_state.commit_index = 0;
+	raft_state.last_applied = 0;
+	raft_state.current_version = meta_version();
+	
+	/* Load configuration */
+	local_node_id = ha_get_node_id();
+	election_timeout_base = cfg_getuint32("RAFT_ELECTION_TIMEOUT", 1000);
+	heartbeat_interval = cfg_getuint32("RAFT_HEARTBEAT_INTERVAL", 100);
+	lease_duration = cfg_getuint32("RAFT_LEASE_DURATION", 30);
+	
+	/* Set initial timeouts */
+	raft_state.election_timeout = get_election_timeout();
+	raft_state.heartbeat_timeout = heartbeat_interval;
+	raft_state.last_heartbeat = monotonic_useconds() / 1000;
+	
+	/* No leader initially */
+	raft_state.current_leader = 0;
+	raft_state.leader_lease_expiry = 0;
+	raft_state.lease_duration = lease_duration;
+	
 	pthread_mutex_unlock(&raft_mutex);
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_create_shard: created shard %"PRIu32" with %"PRIu32" peers, state=%d, last_heartbeat=0, election_timeout=%"PRIu64"ms", 
-	       shard_id, peer_count, shard->state, shard->election_timeout);
+	/* Register with main loop */
+	main_time_register(0, 100000, raftconsensus_tick_wrapper);
 	
-	return shard;
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Raft consensus initialized: node_id=%u version=%"PRIu64,
+	        local_node_id, raft_state.current_version);
+	
+	return 0;
 }
 
-/* Destroy raft shard */
-void raft_destroy_shard(raft_shard_t *shard) {
+/* Terminate Raft consensus */
+void raftconsensus_term(void) {
+	raft_log_entry_t *entry, *next;
 	raft_peer_t *peer, *next_peer;
-	raft_log_entry_t *entry, *next_entry;
-	raft_shard_t *current, *prev;
 	
-	if (shard == NULL) {
-		return;
-	}
-	
-	/* Remove from global list */
 	pthread_mutex_lock(&raft_mutex);
-	current = shards;
-	prev = NULL;
 	
-	while (current != NULL) {
-		if (current == shard) {
-			if (prev != NULL) {
-				prev->next = current->next;
-			} else {
-				shards = current->next;
-			}
-			break;
+	/* Free log entries */
+	entry = raft_state.log_head;
+	while (entry) {
+		next = entry->next;
+		if (entry->data) {
+			free(entry->data);
 		}
-		prev = current;
-		current = current->next;
+		free(entry);
+		entry = next;
 	}
-	pthread_mutex_unlock(&raft_mutex);
 	
-	/* Clean up peers */
-	peer = shard->peers;
-	while (peer != NULL) {
+	/* Free peers */
+	peer = raft_state.peers;
+	while (peer) {
 		next_peer = peer->next;
 		if (peer->host) {
 			free(peer->host);
@@ -203,429 +118,521 @@ void raft_destroy_shard(raft_shard_t *shard) {
 		peer = next_peer;
 	}
 	
-	/* Clean up log entries */
-	entry = shard->log_head;
-	while (entry != NULL) {
-		next_entry = entry->next;
-		if (entry->data) {
-			free(entry->data);
-		}
-		free(entry);
-		entry = next_entry;
-	}
+	pthread_mutex_unlock(&raft_mutex);
 	
-	free(shard);
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Raft consensus terminated");
 }
 
-/* Check if local node is leader for shard */
-int raft_is_leader(uint32_t shard_id) {
-	raft_shard_t *shard;
+/* Check if we are the leader */
+int raft_is_leader(void) {
 	int is_leader;
 	
 	pthread_mutex_lock(&raft_mutex);
-	shard = find_shard(shard_id);
-	is_leader = (shard != NULL && shard->state == RAFT_STATE_LEADER);
+	is_leader = (raft_state.state == RAFT_STATE_LEADER);
 	pthread_mutex_unlock(&raft_mutex);
 	
 	return is_leader;
 }
 
-/* Get current leader for shard */
-uint32_t raft_get_leader(uint32_t shard_id) {
-	raft_shard_t *shard;
-	uint32_t leader = 0;
-	hlc_timestamp_t now_hlc;
+/* Get current leader */
+uint32_t raft_get_leader(void) {
+	uint32_t leader;
 	
 	pthread_mutex_lock(&raft_mutex);
-	shard = find_shard(shard_id);
-	if (shard != NULL) {
-		if (shard->state == RAFT_STATE_LEADER) {
-			/* We are the leader - check if lease is still valid */
-			hlc_init(&now_hlc);
-			if (hlc_compare(&now_hlc, &shard->leader_lease_hlc) < 0) {
-				leader = local_node_id;
-			}
-		} else if (shard->current_leader > 0) {
-			/* Return known leader */
-			leader = shard->current_leader;
-		}
-	}
+	leader = raft_state.current_leader;
 	pthread_mutex_unlock(&raft_mutex);
 	
 	return leader;
 }
 
-/* Start election for shard */
-void raft_start_election(raft_shard_t *shard) {
-	uint8_t msg[64];
-	uint8_t *ptr;
-	uint32_t msg_size;
+/* Check if we have a valid lease */
+int raft_has_valid_lease(void) {
+	int valid = 0;
+	uint64_t now;
 	
-	if (shard == NULL) {
-		return;
+	pthread_mutex_lock(&raft_mutex);
+	
+	if (raft_state.state == RAFT_STATE_LEADER) {
+		now = monotonic_seconds();
+		valid = (now < raft_state.leader_lease_expiry);
 	}
 	
-	/* Transition to candidate */
-	shard->state = RAFT_STATE_CANDIDATE;
-	shard->current_term++;
-	shard->voted_for = local_node_id;
-	shard->votes_received = 1; /* Vote for self */
-	shard->election_start = monotonic_useconds() / 1000;
+	pthread_mutex_unlock(&raft_mutex);
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: starting election for shard %"PRIu32" term %"PRIu64, 
-	       shard->shard_id, shard->current_term);
-	
-	/* Build RequestVote message */
-	ptr = msg;
-	put8bit(&ptr, RAFT_MSG_REQUEST_VOTE);
-	put32bit(&ptr, shard->shard_id);
-	put64bit(&ptr, shard->current_term);
-	put32bit(&ptr, local_node_id);
-	put64bit(&ptr, shard->log_count);
-	put64bit(&ptr, shard->log_tail ? shard->log_tail->term : 0);
-	msg_size = ptr - msg;
-	
-	/* Send RequestVote to all peers */
-	if (total_nodes > 1) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: broadcasting RequestVote for shard %"PRIu32" (msg_size=%u total_nodes=%u)", 
-		        shard->shard_id, msg_size, total_nodes);
-		haconn_send_raft_broadcast(msg, msg_size);
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: RequestVote broadcast completed for shard %"PRIu32, shard->shard_id);
-	} else {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: single node cluster, no broadcast needed for shard %"PRIu32, shard->shard_id);
-	}
-	
-	/* Check if we have majority of votes */
-	if (shard->votes_received > total_nodes / 2) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: majority achieved for shard %"PRIu32" (votes=%"PRIu32"/%"PRIu32")", 
-		       shard->shard_id, shard->votes_received, total_nodes);
-		raft_become_leader(shard);
-	} else {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_start_election: waiting for more votes for shard %"PRIu32" (votes=%"PRIu32"/%"PRIu32" needed=%"PRIu32")", 
-		       shard->shard_id, shard->votes_received, total_nodes, (total_nodes / 2) + 1);
-	}
+	return valid;
 }
 
-/* Send heartbeats to followers */
-void raft_send_heartbeats(raft_shard_t *shard) {
-	raft_peer_t *peer;
-	raft_message_t msg;
+/* Get next version number (leader only with lease) */
+uint64_t raft_get_next_version(void) {
+	uint64_t version = 0;
+	uint64_t now;
 	
-	if (shard == NULL || shard->state != RAFT_STATE_LEADER) {
-		return;
+	pthread_mutex_lock(&raft_mutex);
+	
+	if (raft_state.state == RAFT_STATE_LEADER) {
+		now = monotonic_seconds();
+		
+		/* Check lease validity */
+		if (now < raft_state.leader_lease_expiry) {
+			/* We have a valid lease - allocate version */
+			version = ++raft_state.current_version;
+			
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Raft allocated version %"PRIu64" (lease valid for %"PRIu64"s)",
+			        version, raft_state.leader_lease_expiry - now);
+		} else {
+			/* Lease expired - cannot allocate */
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Raft lease expired - cannot allocate version");
+		}
+	} else {
+		/* Not leader */
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Not Raft leader (leader is %u) - cannot allocate version", 
+		        raft_state.current_leader);
 	}
 	
-	/* Send AppendEntries (heartbeat) to all peers */
-	msg.type = RAFT_MSG_APPEND_ENTRIES;
-	msg.shard_id = shard->shard_id;
-	msg.data.append_entries.term = shard->current_term;
-	msg.data.append_entries.leader_id = local_node_id;
-	msg.data.append_entries.prev_log_index = shard->log_count;
-	msg.data.append_entries.prev_log_term = (shard->log_tail ? shard->log_tail->term : 0);
-	msg.data.append_entries.entry_count = 0;
-	msg.data.append_entries.entries = NULL;
-	msg.data.append_entries.leader_commit = shard->commit_index;
+	pthread_mutex_unlock(&raft_mutex);
 	
-	peer = shard->peers;
-	while (peer != NULL) {
-		raft_send_message(&msg, peer->node_id);
-		peer = peer->next;
-	}
-	
-	shard->last_heartbeat = monotonic_useconds() / 1000;
+	return version;
 }
 
 /* Append entry to Raft log */
-int raft_append_entry(uint32_t shard_id, uint32_t type, const void *data, uint32_t data_size) {
-	raft_shard_t *shard;
+int raft_append_entry(uint32_t type, const void *data, uint32_t data_size, uint64_t version) {
 	raft_log_entry_t *entry;
 	int result = -1;
 	
 	pthread_mutex_lock(&raft_mutex);
 	
-	shard = find_shard(shard_id);
-	if (shard == NULL || shard->state != RAFT_STATE_LEADER) {
+	if (raft_state.state != RAFT_STATE_LEADER) {
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Cannot append to Raft log - not leader");
 		pthread_mutex_unlock(&raft_mutex);
 		return -1;
 	}
 	
+	/* Create new log entry */
 	entry = malloc(sizeof(raft_log_entry_t));
-	if (entry != NULL) {
-		entry->term = shard->current_term;
-		entry->index = shard->log_count + 1;
-		entry->type = type;
-		entry->shard_id = shard_id;
-		entry->data_size = data_size;
-		entry->next = NULL;
-		
-		if (data_size > 0 && data != NULL) {
-			entry->data = malloc(data_size);
-			if (entry->data != NULL) {
-				memcpy(entry->data, data, data_size);
-			} else {
-				free(entry);
-				entry = NULL;
-			}
-		} else {
-			entry->data = NULL;
-		}
-		
-		if (entry != NULL) {
-			/* Add to log */
-			if (shard->log_tail != NULL) {
-				shard->log_tail->next = entry;
-			} else {
-				shard->log_head = entry;
-			}
-			shard->log_tail = entry;
-			shard->log_count++;
-			result = 0;
-		}
+	if (!entry) {
+		pthread_mutex_unlock(&raft_mutex);
+		return -1;
 	}
+	
+	entry->term = raft_state.current_term;
+	entry->index = raft_state.log_count + 1;
+	entry->version = version;
+	entry->type = type;
+	entry->data_size = data_size;
+	entry->data = malloc(data_size);
+	entry->next = NULL;
+	
+	if (!entry->data) {
+		free(entry);
+		pthread_mutex_unlock(&raft_mutex);
+		return -1;
+	}
+	
+	memcpy(entry->data, data, data_size);
+	
+	/* Append to log */
+	if (raft_state.log_tail) {
+		raft_state.log_tail->next = entry;
+	} else {
+		raft_state.log_head = entry;
+	}
+	raft_state.log_tail = entry;
+	raft_state.log_count++;
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Appended to Raft log: index=%"PRIu64" version=%"PRIu64" type=%u size=%u",
+	        entry->index, entry->version, type, data_size);
+	
+	/* Send to followers immediately */
+	raft_peer_t *peer = raft_state.peers;
+	while (peer) {
+		raft_send_append_entries(peer);
+		peer = peer->next;
+	}
+	
+	result = 0;
 	
 	pthread_mutex_unlock(&raft_mutex);
 	
 	return result;
 }
 
-/* Periodic Raft maintenance */
-void raft_tick(void) {
-	raft_shard_t *shard;
-	uint64_t current_time;
-	hlc_timestamp_t now_hlc;
-	static uint64_t tick_count = 0;
+/* Start election */
+void raft_start_election(void) {
+	pthread_mutex_lock(&raft_mutex);
 	
-	current_time = monotonic_useconds() / 1000;
+	/* Increment term and transition to candidate */
+	raft_state.current_term++;
+	raft_state.state = RAFT_STATE_CANDIDATE;
+	raft_state.voted_for = local_node_id;
+	raft_state.votes_received = 1; /* Vote for self */
+	raft_state.election_start = monotonic_useconds() / 1000;
+	raft_state.current_leader = 0;
 	
-	/* Update global HLC */
-	hlc_init(&now_hlc);
-	hlc_update(&global_hlc, &now_hlc);
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Starting election for term %"PRIu64, raft_state.current_term);
+	
+	/* Reset election timeout */
+	raft_state.election_timeout = get_election_timeout();
+	
+	/* Send RequestVote to all peers */
+	raft_send_request_vote();
+	
+	pthread_mutex_unlock(&raft_mutex);
+}
+
+/* Send heartbeats to all peers */
+void raft_send_heartbeats(void) {
+	raft_peer_t *peer;
 	
 	pthread_mutex_lock(&raft_mutex);
 	
-	/* Log every 20 ticks (1 second) for initial debugging */
-	if ((tick_count++ % 20) == 0) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_tick: running tick %"PRIu64", current_time=%"PRIu64, tick_count, current_time);
+	if (raft_state.state != RAFT_STATE_LEADER) {
+		pthread_mutex_unlock(&raft_mutex);
+		return;
 	}
 	
-	shard = shards;
-	while (shard != NULL) {
-		switch (shard->state) {
-			case RAFT_STATE_FOLLOWER:
-				/* Check for election timeout */
-				if (current_time - shard->last_heartbeat > shard->election_timeout) {
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft_tick: triggering election for shard %"PRIu32" (timeout=%"PRIu64"ms elapsed=%"PRIu64"ms)", 
-					       shard->shard_id, shard->election_timeout, current_time - shard->last_heartbeat);
-					raft_start_election(shard);
-				}
-				break;
-				
-			case RAFT_STATE_CANDIDATE:
-				/* Check for election timeout */
-				if (current_time - shard->election_start > shard->election_timeout) {
-					raft_start_election(shard); /* Restart election */
-				}
-				break;
-				
-			case RAFT_STATE_LEADER:
-				/* Check if leader lease is still valid */
-				if (hlc_compare(&now_hlc, &shard->leader_lease_hlc) >= 0) {
-					/* Lease expired, step down */
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "raft_tick: leader lease expired for shard %"PRIu32, shard->shard_id);
-					shard->state = RAFT_STATE_FOLLOWER;
-					shard->current_leader = 0;
-					shard->voted_for = 0;
-				} else {
-					/* Send heartbeats */
-					if (current_time - shard->last_heartbeat > shard->heartbeat_timeout) {
-						raft_send_heartbeats(shard);
-					}
-				}
-				break;
-		}
+	/* Send empty AppendEntries as heartbeat */
+	peer = raft_state.peers;
+	while (peer) {
+		raft_send_append_entries(peer);
+		peer = peer->next;
+	}
+	
+	pthread_mutex_unlock(&raft_mutex);
+}
+
+/* Become leader */
+static void raft_become_leader(void) {
+	uint64_t now;
+	
+	/* Already holding raft_mutex */
+	
+	raft_state.state = RAFT_STATE_LEADER;
+	raft_state.current_leader = local_node_id;
+	raft_state.votes_received = 0;
+	
+	/* Set leader lease */
+	now = monotonic_seconds();
+	raft_state.leader_lease_expiry = now + raft_state.lease_duration;
+	
+	/* Ensure version is up to date */
+	uint64_t meta_ver = meta_version();
+	if (meta_ver > raft_state.current_version) {
+		raft_state.current_version = meta_ver;
+	}
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Became leader for term %"PRIu64" with lease until %"PRIu64" starting at version %"PRIu64,
+	        raft_state.current_term, raft_state.leader_lease_expiry, raft_state.current_version);
+	
+	/* Send initial heartbeats */
+	raft_send_heartbeats();
+}
+
+/* Send RequestVote RPC */
+static void raft_send_request_vote(void) {
+	raft_message_t msg;
+	raft_log_entry_t *last_entry;
+	
+	/* Already holding raft_mutex */
+	
+	/* Prepare RequestVote message */
+	msg.type = RAFT_MSG_REQUEST_VOTE;
+	msg.data.request_vote.term = raft_state.current_term;
+	msg.data.request_vote.candidate_id = local_node_id;
+	
+	/* Get last log entry info */
+	last_entry = raft_state.log_tail;
+	if (last_entry) {
+		msg.data.request_vote.last_log_index = last_entry->index;
+		msg.data.request_vote.last_log_term = last_entry->term;
+	} else {
+		msg.data.request_vote.last_log_index = 0;
+		msg.data.request_vote.last_log_term = 0;
+	}
+	
+	/* Send to all peers */
+	raft_peer_t *peer = raft_state.peers;
+	while (peer) {
+		/* Send via haconn */
+		uint8_t buffer[1024];
+		uint8_t *ptr = buffer;
 		
-		shard = shard->next;
+		put32bit(&ptr, msg.type);
+		put64bit(&ptr, msg.data.request_vote.term);
+		put32bit(&ptr, msg.data.request_vote.candidate_id);
+		put64bit(&ptr, msg.data.request_vote.last_log_index);
+		put64bit(&ptr, msg.data.request_vote.last_log_term);
+		
+		haconn_send_raft_request(peer->node_id, buffer, ptr - buffer);
+		
+		peer = peer->next;
+	}
+}
+
+/* Send AppendEntries RPC */
+static void raft_send_append_entries(raft_peer_t *peer) {
+	raft_message_t msg;
+	raft_log_entry_t *entry;
+	uint64_t prev_index, prev_term;
+	
+	/* Already holding raft_mutex */
+	
+	if (!peer) return;
+	
+	/* Prepare AppendEntries message */
+	msg.type = RAFT_MSG_APPEND_ENTRIES;
+	msg.data.append_entries.term = raft_state.current_term;
+	msg.data.append_entries.leader_id = local_node_id;
+	msg.data.append_entries.leader_commit = raft_state.commit_index;
+	
+	/* Find entries to send */
+	prev_index = peer->next_index - 1;
+	prev_term = 0;
+	
+	/* Find prev log entry */
+	entry = raft_state.log_head;
+	while (entry && entry->index < prev_index) {
+		entry = entry->next;
+	}
+	if (entry && entry->index == prev_index) {
+		prev_term = entry->term;
 	}
 	
-	pthread_mutex_unlock(&raft_mutex);
-}
-
-/* Get Raft state for shard */
-raft_state_t raft_get_state(uint32_t shard_id) {
-	raft_shard_t *shard;
-	raft_state_t state = RAFT_STATE_FOLLOWER;
+	msg.data.append_entries.prev_log_index = prev_index;
+	msg.data.append_entries.prev_log_term = prev_term;
 	
-	pthread_mutex_lock(&raft_mutex);
-	shard = find_shard(shard_id);
-	if (shard != NULL) {
-		state = shard->state;
-	}
-	pthread_mutex_unlock(&raft_mutex);
+	/* For now, send as heartbeat (no entries) */
+	msg.data.append_entries.entry_count = 0;
+	msg.data.append_entries.entries = NULL;
 	
-	return state;
-}
-
-/* Placeholder message handling - would integrate with network layer */
-int raft_handle_message(const raft_message_t *msg, uint32_t from_node) {
-	/* TODO: Implement full Raft message handling */
-	return 0;
-}
-
-int raft_send_message(const raft_message_t *msg, uint32_t to_node) {
-	/* TODO: Implement message sending via network layer */
-	return 0;
+	/* Send via haconn */
+	uint8_t buffer[1024];
+	uint8_t *ptr = buffer;
+	
+	put32bit(&ptr, msg.type);
+	put64bit(&ptr, msg.data.append_entries.term);
+	put32bit(&ptr, msg.data.append_entries.leader_id);
+	put64bit(&ptr, msg.data.append_entries.prev_log_index);
+	put64bit(&ptr, msg.data.append_entries.prev_log_term);
+	put64bit(&ptr, msg.data.append_entries.leader_commit);
+	put32bit(&ptr, msg.data.append_entries.entry_count);
+	
+	haconn_send_raft_request(peer->node_id, buffer, ptr - buffer);
 }
 
 /* Handle incoming Raft message */
 void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint32_t length) {
 	const uint8_t *ptr = data;
-	uint8_t msg_type;
-	uint32_t shard_id;
-	uint64_t term, log_index, log_term;
-	uint32_t candidate_id;
-	raft_shard_t *shard;
-	uint8_t response[64];
-	uint8_t *rptr;
-	uint32_t response_size;
+	uint32_t msg_type;
 	
-	if (length < 5) {
-		return;
-	}
+	if (length < 4) return;
 	
-	/* Parse message header */
-	msg_type = get8bit(&ptr);
-	shard_id = get32bit(&ptr);
+	msg_type = get32bit(&ptr);
 	
 	pthread_mutex_lock(&raft_mutex);
 	
-	shard = find_shard(shard_id);
-	if (shard == NULL) {
-		pthread_mutex_unlock(&raft_mutex);
-		return;
+	switch (msg_type) {
+		case RAFT_MSG_REQUEST_VOTE: {
+			if (length < 28) break;
+			
+			uint64_t term = get64bit(&ptr);
+			uint32_t candidate_id = get32bit(&ptr);
+			uint64_t last_log_index = get64bit(&ptr);
+			uint64_t last_log_term = get64bit(&ptr);
+			
+			int vote_granted = 0;
+			
+			/* Update term if necessary */
+			if (term > raft_state.current_term) {
+				raft_state.current_term = term;
+				raft_state.voted_for = 0;
+				raft_state.state = RAFT_STATE_FOLLOWER;
+				raft_state.current_leader = 0;
+			}
+			
+			/* Grant vote if we haven't voted and candidate's log is up to date */
+			if (term == raft_state.current_term && 
+			    (raft_state.voted_for == 0 || raft_state.voted_for == candidate_id)) {
+				
+				/* Check if candidate's log is at least as up to date as ours */
+				raft_log_entry_t *last = raft_state.log_tail;
+				uint64_t our_last_term = last ? last->term : 0;
+				uint64_t our_last_index = last ? last->index : 0;
+				
+				if (last_log_term > our_last_term ||
+				    (last_log_term == our_last_term && last_log_index >= our_last_index)) {
+					vote_granted = 1;
+					raft_state.voted_for = candidate_id;
+					raft_state.last_heartbeat = monotonic_useconds() / 1000;
+				}
+			}
+			
+			/* Send response */
+			uint8_t resp[16];
+			uint8_t *resp_ptr = resp;
+			put32bit(&resp_ptr, RAFT_MSG_REQUEST_VOTE_RESPONSE);
+			put64bit(&resp_ptr, raft_state.current_term);
+			put8bit(&resp_ptr, vote_granted);
+			
+			haconn_send_raft_response(from_node, resp, resp_ptr - resp);
+			
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "RequestVote from %u term %"PRIu64" - %s",
+			        candidate_id, term, vote_granted ? "granted" : "denied");
+			break;
+		}
+		
+		case RAFT_MSG_REQUEST_VOTE_RESPONSE: {
+			if (length < 13) break;
+			
+			uint64_t term = get64bit(&ptr);
+			uint8_t vote_granted = get8bit(&ptr);
+			
+			/* Ignore if not candidate */
+			if (raft_state.state != RAFT_STATE_CANDIDATE) {
+				break;
+			}
+			
+			/* Update term if necessary */
+			if (term > raft_state.current_term) {
+				raft_state.current_term = term;
+				raft_state.state = RAFT_STATE_FOLLOWER;
+				raft_state.voted_for = 0;
+				raft_state.current_leader = 0;
+				break;
+			}
+			
+			/* Count vote if for current term */
+			if (term == raft_state.current_term && vote_granted) {
+				raft_state.votes_received++;
+				
+				/* Check if we have majority */
+				uint32_t majority = (raft_state.peer_count + 1) / 2 + 1;
+				if (raft_state.votes_received >= majority) {
+					raft_become_leader();
+				}
+			}
+			break;
+		}
+		
+		case RAFT_MSG_APPEND_ENTRIES: {
+			if (length < 40) break;
+			
+			uint64_t term = get64bit(&ptr);
+			uint32_t leader_id = get32bit(&ptr);
+			uint64_t prev_log_index = get64bit(&ptr);
+			uint64_t prev_log_term = get64bit(&ptr);
+			uint64_t leader_commit = get64bit(&ptr);
+			uint32_t entry_count = get32bit(&ptr);
+			
+			int success = 0;
+			uint64_t match_index = 0;
+			
+			/* Update term if necessary */
+			if (term > raft_state.current_term) {
+				raft_state.current_term = term;
+				raft_state.voted_for = 0;
+				raft_state.state = RAFT_STATE_FOLLOWER;
+			}
+			
+			/* Reset election timeout on valid leader message */
+			if (term == raft_state.current_term) {
+				raft_state.state = RAFT_STATE_FOLLOWER;
+				raft_state.current_leader = leader_id;
+				raft_state.last_heartbeat = monotonic_useconds() / 1000;
+				success = 1;
+				
+				/* Update commit index */
+				if (leader_commit > raft_state.commit_index) {
+					raft_state.commit_index = leader_commit;
+					/* Apply committed entries */
+					raft_apply_committed_entries();
+				}
+			}
+			
+			/* Send response */
+			uint8_t resp[24];
+			uint8_t *resp_ptr = resp;
+			put32bit(&resp_ptr, RAFT_MSG_APPEND_ENTRIES_RESPONSE);
+			put64bit(&resp_ptr, raft_state.current_term);
+			put8bit(&resp_ptr, success);
+			put64bit(&resp_ptr, match_index);
+			
+			haconn_send_raft_response(from_node, resp, resp_ptr - resp);
+			break;
+		}
+		
+		case RAFT_MSG_APPEND_ENTRIES_RESPONSE: {
+			/* Handle response - update peer tracking */
+			break;
+		}
 	}
 	
-	switch (msg_type) {
-		case RAFT_MSG_REQUEST_VOTE:
-			if (length >= 33) { /* 1 + 4 + 8 + 4 + 8 + 8 */
-				term = get64bit(&ptr);
-				candidate_id = get32bit(&ptr);
-				log_index = get64bit(&ptr);
-				log_term = get64bit(&ptr);
-				
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: processing RequestVote from node %u for shard %u term %"PRIu64" (our term=%"PRIu64" voted_for=%u)", 
-				        from_node, shard_id, term, shard->current_term, shard->voted_for);
-				
-				/* Update HLC from remote */
-				hlc_update(&global_hlc, NULL);
-				
-				/* Check if we should grant vote */
-				int vote_granted = 0;
-				if (term > shard->current_term) {
-					/* New term, update and reset vote */
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: updating to newer term %"PRIu64" for shard %u", term, shard_id);
-					shard->current_term = term;
-					shard->voted_for = 0;
-					shard->state = RAFT_STATE_FOLLOWER;
-					shard->current_leader = 0;
-				}
-				
-				if (term == shard->current_term && 
-				    (shard->voted_for == 0 || shard->voted_for == candidate_id) &&
-				    log_term >= (shard->log_tail ? shard->log_tail->term : 0) &&
-				    log_index >= shard->log_count) {
-					/* Grant vote */
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: granting vote to candidate %u for shard %u term %"PRIu64, candidate_id, shard_id, term);
-					shard->voted_for = candidate_id;
-					vote_granted = 1;
-					shard->last_heartbeat = monotonic_useconds() / 1000;
-				} else {
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: denying vote to candidate %u for shard %u (term_match=%d voted_for=%u log_ok=%d)", 
-					        candidate_id, shard_id, (term == shard->current_term), shard->voted_for, 
-					        (log_term >= (shard->log_tail ? shard->log_tail->term : 0) && log_index >= shard->log_count));
-				}
-				
-				/* Send response */
-				rptr = response;
-				put8bit(&rptr, RAFT_MSG_REQUEST_VOTE_RESPONSE);
-				put32bit(&rptr, shard_id);
-				put64bit(&rptr, shard->current_term);
-				put8bit(&rptr, vote_granted);
-				response_size = rptr - response;
-				
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: sending vote response to node %u: %s (response_size=%u)", 
-				        from_node, vote_granted ? "GRANTED" : "DENIED", response_size);
-				haconn_send_raft_response(from_node, response, response_size);
-				
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "raft: vote %s for shard %u candidate %u term %"PRIu64,
-				        vote_granted ? "granted" : "denied", shard_id, candidate_id, term);
+	pthread_mutex_unlock(&raft_mutex);
+}
+
+/* Apply committed log entries */
+static void raft_apply_committed_entries(void) {
+	raft_log_entry_t *entry;
+	
+	/* Already holding raft_mutex */
+	
+	entry = raft_state.log_head;
+	while (entry && entry->index <= raft_state.commit_index) {
+		if (entry->index > raft_state.last_applied) {
+			/* Apply this entry */
+			/* For now, just update our version */
+			if (entry->version > raft_state.current_version) {
+				raft_state.current_version = entry->version;
+			}
+			
+			raft_state.last_applied = entry->index;
+			
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Applied log entry %"PRIu64" version %"PRIu64,
+			        entry->index, entry->version);
+		}
+		entry = entry->next;
+	}
+}
+
+/* Periodic tick function */
+void raftconsensus_tick(double now) {
+	uint64_t now_ms = (uint64_t)(now * 1000);
+	
+	pthread_mutex_lock(&raft_mutex);
+	
+	switch (raft_state.state) {
+		case RAFT_STATE_FOLLOWER:
+			/* Check election timeout */
+			if (now_ms - raft_state.last_heartbeat > raft_state.election_timeout) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Election timeout - starting election");
+				pthread_mutex_unlock(&raft_mutex);
+				raft_start_election();
+				return;
 			}
 			break;
 			
-		case RAFT_MSG_REQUEST_VOTE_RESPONSE:
-			if (length >= 14 && shard->state == RAFT_STATE_CANDIDATE) { /* 1 + 4 + 8 + 1 */
-				term = get64bit(&ptr);
-				uint8_t vote_granted = get8bit(&ptr);
-				
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: received vote response from node %u for shard %u: %s (term=%"PRIu64" our_term=%"PRIu64" votes=%u/%u)", 
-				        from_node, shard_id, vote_granted ? "GRANTED" : "DENIED", term, shard->current_term, 
-				        shard->votes_received, total_nodes);
-				
-				if (term > shard->current_term) {
-					/* Newer term, step down */
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: stepping down due to newer term %"PRIu64" for shard %u", term, shard_id);
-					shard->current_term = term;
-					shard->state = RAFT_STATE_FOLLOWER;
-					shard->voted_for = 0;
-					shard->current_leader = 0;
-				} else if (term == shard->current_term && vote_granted) {
-					/* Got a vote */
-					shard->votes_received++;
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: vote counted for shard %u, now have %u/%u votes (need %u)", 
-					        shard_id, shard->votes_received, total_nodes, (total_nodes / 2) + 1);
-					
-					/* Check if we have majority */
-					if (shard->votes_received > total_nodes / 2) {
-						mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: achieved majority for shard %u, becoming leader", shard_id);
-						raft_become_leader(shard);
-					}
-				} else {
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: vote response ignored for shard %u (term_match=%d vote_granted=%d)", 
-					        shard_id, (term == shard->current_term), vote_granted);
-				}
-			} else {
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raft: vote response rejected for shard %u (length=%u state=%d expected_state=%d)", 
-				        shard_id, length, shard->state, RAFT_STATE_CANDIDATE);
+		case RAFT_STATE_CANDIDATE:
+			/* Check election timeout */
+			if (now_ms - raft_state.election_start > raft_state.election_timeout) {
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Election timeout in candidate state - restarting");
+				pthread_mutex_unlock(&raft_mutex);
+				raft_start_election();
+				return;
 			}
 			break;
 			
-		case RAFT_MSG_APPEND_ENTRIES:
-			/* Heartbeat/log replication */
-			if (length >= 13) { /* 1 + 4 + 8 minimum */
-				term = get64bit(&ptr);
-				
-				/* Update HLC from leader */
-				hlc_update(&global_hlc, NULL);
-				
-				if (term >= shard->current_term) {
-					/* Valid leader */
-					shard->current_term = term;
-					shard->state = RAFT_STATE_FOLLOWER;
-					shard->voted_for = 0;
-					shard->current_leader = from_node;
-					shard->last_heartbeat = monotonic_useconds() / 1000;
-					
-					/* TODO: Handle log entries if any */
-				}
-				
-				/* Send response */
-				rptr = response;
-				put8bit(&rptr, RAFT_MSG_APPEND_ENTRIES_RESPONSE);
-				put32bit(&rptr, shard_id);
-				put64bit(&rptr, shard->current_term);
-				put8bit(&rptr, 1); /* Success */
-				response_size = rptr - response;
-				
-				haconn_send_raft_response(from_node, response, response_size);
+		case RAFT_STATE_LEADER:
+			/* Send periodic heartbeats */
+			if (now_ms - raft_state.last_heartbeat > raft_state.heartbeat_timeout) {
+				raft_state.last_heartbeat = now_ms;
+				pthread_mutex_unlock(&raft_mutex);
+				raft_send_heartbeats();
+				return;
+			}
+			
+			/* Check lease expiry */
+			if (now > raft_state.leader_lease_expiry - 5) {
+				/* Lease about to expire - renew by sending heartbeats */
+				raft_state.leader_lease_expiry = now + raft_state.lease_duration;
 			}
 			break;
 	}
@@ -633,129 +640,190 @@ void raft_handle_incoming_message(uint32_t from_node, const uint8_t *data, uint3
 	pthread_mutex_unlock(&raft_mutex);
 }
 
-/* Initialize Raft consensus module */
-int raftconsensus_init(void) {
-	int i;
-	raft_shard_t *shard;
-	char *peers_str;
+/* Wrapper for main loop */
+void raftconsensus_tick_wrapper(void) {
+	raftconsensus_tick(monotonic_seconds());
+}
+
+/* Add peer */
+int raft_add_peer(uint32_t node_id, const char *host, uint16_t port) {
+	raft_peer_t *peer;
 	
-	/* Get node ID from config */
-	local_node_id = ha_get_node_id();
-	if (local_node_id == 0) {
-		local_node_id = cfg_getuint32("MFSHA_NODE_ID", 1);
-	}
+	pthread_mutex_lock(&raft_mutex);
 	
-	/* Initialize HLC */
-	hlc_init(&global_hlc);
-	
-	/* Get total nodes from peer config */
-	peers_str = cfg_getstr("MFSHA_PEERS", "");
-	if (peers_str && strlen(peers_str) > 0) {
-		total_nodes = 1; /* Count self */
-		char *p = peers_str;
-		while (*p) {
-			if (*p == ',') total_nodes++;
-			p++;
+	/* Check if peer already exists */
+	peer = raft_state.peers;
+	while (peer) {
+		if (peer->node_id == node_id) {
+			pthread_mutex_unlock(&raft_mutex);
+			return 0; /* Already exists */
 		}
-		free(peers_str);
+		peer = peer->next;
 	}
 	
-	/* Create shards 0-7 for metadata partitioning */
-	for (i = 0; i < 8; i++) {
-		shard = raft_create_shard(i, NULL, 0);
-		if (shard == NULL) {
-			mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "raftconsensus_init: failed to create shard %d", i);
-			return -1;
-		}
+	/* Create new peer */
+	peer = malloc(sizeof(raft_peer_t));
+	if (!peer) {
+		pthread_mutex_unlock(&raft_mutex);
+		return -1;
 	}
 	
-	/* Register periodic tick - every 1 second */
-	main_time_register(1, 0, raftconsensus_tick_wrapper);
+	peer->node_id = node_id;
+	peer->host = strdup(host);
+	peer->port = port;
+	peer->next_index = 1;
+	peer->match_index = 0;
+	peer->last_contact = 0;
 	
-	/* Register for polling events */
-	main_poll_register(raftconsensus_desc, raftconsensus_serve);
+	/* Add to list */
+	peer->next = raft_state.peers;
+	raft_state.peers = peer;
+	raft_state.peer_count++;
 	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_init: initialized with node_id=%"PRIu32" total_nodes=%"PRIu32" - registered tick and polling", 
-	        local_node_id, total_nodes);
+	pthread_mutex_unlock(&raft_mutex);
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Added Raft peer %u at %s:%u", node_id, host, port);
+	
 	return 0;
 }
 
-void raftconsensus_term(void) {
-	raft_shard_t *shard, *next;
+/* Get current state */
+raft_state_t raft_get_state(void) {
+	raft_state_t state;
+	
+	pthread_mutex_lock(&raft_mutex);
+	state = raft_state.state;
+	pthread_mutex_unlock(&raft_mutex);
+	
+	return state;
+}
+
+/* Get current term */
+uint64_t raft_get_term(void) {
+	uint64_t term;
+	
+	pthread_mutex_lock(&raft_mutex);
+	term = raft_state.current_term;
+	pthread_mutex_unlock(&raft_mutex);
+	
+	return term;
+}
+
+/* Get current version */
+uint64_t raft_get_current_version(void) {
+	uint64_t version;
+	
+	pthread_mutex_lock(&raft_mutex);
+	version = raft_state.current_version;
+	pthread_mutex_unlock(&raft_mutex);
+	
+	return version;
+}
+
+/* Get statistics */
+void raft_get_stats(raft_stats_t *stats) {
+	if (!stats) return;
 	
 	pthread_mutex_lock(&raft_mutex);
 	
-	shard = shards;
-	while (shard != NULL) {
-		next = shard->next;
-		raft_destroy_shard(shard);
-		shard = next;
-	}
-	shards = NULL;
+	stats->current_state = raft_state.state;
+	stats->current_leader = raft_state.current_leader;
+	stats->current_term = raft_state.current_term;
+	stats->current_version = raft_state.current_version;
+	stats->total_log_entries = raft_state.log_count;
+	stats->committed_entries = raft_state.commit_index;
+	stats->active_peers = raft_state.peer_count;
 	
 	pthread_mutex_unlock(&raft_mutex);
-	
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_term: terminated");
 }
 
-/* Main loop tick function - wraps raft_tick() */
-void raftconsensus_tick_wrapper(void) {
-	static uint64_t wrapper_count = 0;
-	wrapper_count++;
-	if ((wrapper_count % 20) == 0) {
-		mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_tick_wrapper: called %"PRIu64" times", wrapper_count);
-	}
-	raft_tick();
-}
-
-/* Compatibility wrapper for main loop */
-void raftconsensus_tick(double now) {
-	(void)now; /* Parameter used for future timing optimizations */
-	raft_tick();
-}
-
-/* Reload configuration */
-void raftconsensus_reload(void) {
-	/* TODO: Reload configuration parameters */
-	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "raftconsensus_reload: configuration reloaded");
-}
-
-/* Collect file descriptors for polling */
-void raftconsensus_desc(struct pollfd *pdesc, uint32_t *ndesc) {
-	/* Delegate to haconn for network communication */
-	haconn_desc(pdesc, ndesc);
-}
-
-/* Service events from polling */
-void raftconsensus_serve(struct pollfd *pdesc) {
-	/* Delegate to haconn for network communication */
-	haconn_serve(pdesc);
-}
-
-/* Display status information */
+/* Display Raft info */
 void raftconsensus_info(FILE *fd) {
-	raft_shard_t *shard;
-	int shard_count = 0;
+	const char *state_str;
+	uint64_t now;
 	
 	pthread_mutex_lock(&raft_mutex);
 	
-	fprintf(fd, "[raftconsensus status]\n");
-	fprintf(fd, "local_node_id: %"PRIu32"\n", local_node_id);
-	
-	shard = shards;
-	while (shard != NULL) {
-		fprintf(fd, "shard %"PRIu32": state=%s term=%"PRIu64" peers=%"PRIu32" log_entries=%"PRIu64"\n",
-		        shard->shard_id,
-		        (shard->state == RAFT_STATE_LEADER) ? "LEADER" :
-		        (shard->state == RAFT_STATE_CANDIDATE) ? "CANDIDATE" : "FOLLOWER",
-		        shard->current_term,
-		        shard->peer_count,
-		        shard->log_count);
-		shard = shard->next;
-		shard_count++;
+	switch (raft_state.state) {
+		case RAFT_STATE_FOLLOWER: state_str = "FOLLOWER"; break;
+		case RAFT_STATE_CANDIDATE: state_str = "CANDIDATE"; break;
+		case RAFT_STATE_LEADER: state_str = "LEADER"; break;
+		default: state_str = "UNKNOWN";
 	}
 	
-	fprintf(fd, "total_shards: %d\n", shard_count);
+	fprintf(fd, "[Raft Consensus]\n");
+	fprintf(fd, "state: %s\n", state_str);
+	fprintf(fd, "node_id: %u\n", local_node_id);
+	fprintf(fd, "current_term: %"PRIu64"\n", raft_state.current_term);
+	fprintf(fd, "current_leader: %u\n", raft_state.current_leader);
+	fprintf(fd, "current_version: %"PRIu64"\n", raft_state.current_version);
+	fprintf(fd, "voted_for: %u\n", raft_state.voted_for);
+	fprintf(fd, "commit_index: %"PRIu64"\n", raft_state.commit_index);
+	fprintf(fd, "last_applied: %"PRIu64"\n", raft_state.last_applied);
+	fprintf(fd, "log_entries: %"PRIu64"\n", raft_state.log_count);
+	fprintf(fd, "peer_count: %u\n", raft_state.peer_count);
+	
+	if (raft_state.state == RAFT_STATE_LEADER) {
+		now = monotonic_seconds();
+		fprintf(fd, "lease_valid: %s\n", now < raft_state.leader_lease_expiry ? "yes" : "no");
+		fprintf(fd, "lease_remaining: %"PRId64"s\n", 
+		        (int64_t)(raft_state.leader_lease_expiry - now));
+	}
+	
+	fprintf(fd, "\n[Raft Peers]\n");
+	raft_peer_t *peer = raft_state.peers;
+	while (peer) {
+		fprintf(fd, "peer %u: %s:%u next_index=%"PRIu64" match_index=%"PRIu64"\n",
+		        peer->node_id, peer->host, peer->port, 
+		        peer->next_index, peer->match_index);
+		peer = peer->next;
+	}
 	
 	pthread_mutex_unlock(&raft_mutex);
 }
+
+/* Stub implementations for network integration */
+void raftconsensus_desc(struct pollfd *pdesc, uint32_t *ndesc) {
+	/* Raft messages are handled through haconn */
+}
+
+void raftconsensus_serve(struct pollfd *pdesc) {
+	/* Raft messages are handled through haconn */
+}
+
+void raftconsensus_reload(void) {
+	pthread_mutex_lock(&raft_mutex);
+	
+	election_timeout_base = cfg_getuint32("RAFT_ELECTION_TIMEOUT", 1000);
+	heartbeat_interval = cfg_getuint32("RAFT_HEARTBEAT_INTERVAL", 100);
+	lease_duration = cfg_getuint32("RAFT_LEASE_DURATION", 30);
+	
+	raft_state.heartbeat_timeout = heartbeat_interval;
+	raft_state.lease_duration = lease_duration;
+	
+	pthread_mutex_unlock(&raft_mutex);
+	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Raft configuration reloaded");
+}
+
+/* Stub implementations - not used in simplified design */
+int raft_handle_message(const raft_message_t *msg, uint32_t from_node) {
+	return 0;
+}
+
+int raft_send_message(const raft_message_t *msg, uint32_t to_node) {
+	return 0;
+}
+
+int raft_save_state(void) {
+	return 0;
+}
+
+int raft_load_state(void) {
+	return 0;
+}
+
+void raft_tick(void) {
+	/* Use raftconsensus_tick instead */
+}
+

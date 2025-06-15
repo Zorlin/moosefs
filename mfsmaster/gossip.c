@@ -47,7 +47,8 @@ typedef struct gossip_node {
 	uint8_t state;
 	double last_seen;
 	uint64_t incarnation;
-	uint32_t version_count;
+	uint64_t current_version;  /* Current metadata version */
+	uint64_t highest_version;  /* Highest version this node has */
 } gossip_node_t;
 
 static double last_gossip_time = 0.0;
@@ -82,7 +83,8 @@ static gossip_node_t* gossip_add_node(uint32_t node_id, uint32_t ip, uint16_t po
 			node->state = NODE_STATE_ALIVE;
 			node->last_seen = monotonic_seconds();
 			node->incarnation = 0;
-			node->version_count = 0;
+			node->current_version = 0;
+			node->highest_version = 0;
 			node->next = nodes_head;
 			nodes_head = node;
 			known_nodes++;
@@ -160,16 +162,21 @@ static void gossip_send_message(uint8_t msg_type, uint32_t target_ip, uint16_t t
 	struct sockaddr_in addr;
 	ssize_t sent;
 	
+	/* Get current version info */
+	extern uint64_t meta_version(void);
+	uint64_t my_version = meta_version();
+	
 	/* Build message header */
 	put32bit(&ptr, GOSSIP_MAGIC);
 	put8bit(&ptr, msg_type);
 	put32bit(&ptr, ha_get_node_id());
 	put64bit(&ptr, local_incarnation);
+	put64bit(&ptr, my_version); /* Add current version to all messages */
 	
 	switch (msg_type) {
 		case GOSSIP_MSG_PING:
 		case GOSSIP_MSG_HEARTBEAT:
-			/* Just header */
+			/* Just header + version */
 			break;
 			
 		case GOSSIP_MSG_NODE_LIST:
@@ -182,6 +189,8 @@ static void gossip_send_message(uint8_t msg_type, uint32_t target_ip, uint16_t t
 				put16bit(&ptr, node->port);
 				put8bit(&ptr, node->state);
 				put64bit(&ptr, node->incarnation);
+				put64bit(&ptr, node->current_version);
+				put64bit(&ptr, node->highest_version);
 				node = node->next;
 			}
 			break;
@@ -304,10 +313,11 @@ static void gossip_process_message(uint8_t *buffer, ssize_t len, struct sockaddr
 	const uint8_t *ptr = buffer;
 	uint32_t magic, sender_id;
 	uint64_t sender_incarnation;
+	uint64_t sender_version;
 	uint8_t msg_type;
 	gossip_node_t *sender_node;
 	
-	if (len < 17) return; /* Too small */
+	if (len < 25) return; /* Too small - now includes version */
 	
 	/* Parse header */
 	magic = get32bit(&ptr);
@@ -316,6 +326,7 @@ static void gossip_process_message(uint8_t *buffer, ssize_t len, struct sockaddr
 	msg_type = get8bit(&ptr);
 	sender_id = get32bit(&ptr);
 	sender_incarnation = get64bit(&ptr);
+	sender_version = get64bit(&ptr); /* Extract version from message */
 	
 	/* Update sender info */
 	sender_node = gossip_find_node(sender_id);
@@ -330,6 +341,26 @@ static void gossip_process_message(uint8_t *buffer, ssize_t len, struct sockaddr
 		sender_node->incarnation = sender_incarnation;
 		sender_node->ip = from->sin_addr.s_addr;
 		sender_node->port = ntohs(from->sin_port);
+		
+		/* Update version information */
+		sender_node->current_version = sender_version;
+		if (sender_version > sender_node->highest_version) {
+			sender_node->highest_version = sender_version;
+		}
+		
+		/* Check if we need to synchronize */
+		extern uint64_t meta_version(void);
+		uint64_t my_version = meta_version();
+		
+		if (sender_version > my_version) {
+			/* This node has newer data - trigger synchronization */
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "gossip: node %u has version %"PRIu64", we have %"PRIu64" - triggering sync",
+			        sender_id, sender_version, my_version);
+			
+			/* Request missing versions from this node */
+			extern void metasync_request_versions(uint32_t node_id, uint64_t from_version, uint64_t to_version);
+			metasync_request_versions(sender_id, my_version + 1, sender_version);
+		}
 		
 		if (sender_node->state != NODE_STATE_ALIVE) {
 			sender_node->state = NODE_STATE_ALIVE;
@@ -348,16 +379,18 @@ static void gossip_process_message(uint8_t *buffer, ssize_t len, struct sockaddr
 			
 		case GOSSIP_MSG_NODE_LIST:
 			/* Process node list */
-			if (len >= 21) {
+			if (len >= 29) { /* Updated size check for version info */
 				uint32_t count = get32bit(&ptr);
 				uint32_t i;
 				
-				for (i = 0; i < count && (ptr - buffer + 19) <= len; i++) {
+				for (i = 0; i < count && (ptr - buffer + 35) <= len; i++) { /* 35 bytes per node entry now */
 					uint32_t node_id = get32bit(&ptr);
 					uint32_t node_ip = get32bit(&ptr);
 					uint16_t node_port = get16bit(&ptr);
 					uint8_t node_state = get8bit(&ptr);
 					uint64_t node_incarnation = get64bit(&ptr);
+					uint64_t node_current_version = get64bit(&ptr);
+					uint64_t node_highest_version = get64bit(&ptr);
 					
 					if (node_id != ha_get_node_id()) {
 						gossip_node_t *node = gossip_find_node(node_id);
@@ -366,6 +399,8 @@ static void gossip_process_message(uint8_t *buffer, ssize_t len, struct sockaddr
 							if (node) {
 								node->incarnation = node_incarnation;
 								node->state = node_state;
+								node->current_version = node_current_version;
+								node->highest_version = node_highest_version;
 							}
 						} else if (node && node->incarnation < node_incarnation) {
 							/* Update with newer information */
@@ -373,6 +408,24 @@ static void gossip_process_message(uint8_t *buffer, ssize_t len, struct sockaddr
 							node->port = node_port;
 							node->incarnation = node_incarnation;
 							node->state = node_state;
+							node->current_version = node_current_version;
+							node->highest_version = node_highest_version;
+						}
+						
+						/* Check if any node has newer data */
+						if (node && node_current_version > 0) {
+							extern uint64_t meta_version(void);
+							uint64_t my_version = meta_version();
+							
+							if (node_current_version > my_version) {
+								mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, 
+								        "gossip: discovered node %u has version %"PRIu64", we have %"PRIu64,
+								        node_id, node_current_version, my_version);
+								
+								/* Request missing versions */
+								extern void metasync_request_versions(uint32_t node_id, uint64_t from_version, uint64_t to_version);
+								metasync_request_versions(node_id, my_version + 1, node_current_version);
+							}
 						}
 					}
 				}

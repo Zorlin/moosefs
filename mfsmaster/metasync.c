@@ -25,6 +25,8 @@
 #include "datapack.h"
 #include "cfg.h"
 #include "main.h"
+#include "hamaster.h"
+#include "raftconsensus.h"
 
 /* Sync message types */
 #define METASYNC_VERSION_REQ    0x01
@@ -207,6 +209,29 @@ static void metasync_process_version_response(uint32_t peerid, uint64_t peer_ver
     pthread_mutex_unlock(&sync_state.mutex);
 }
 
+/* Ring-based log shipping implementation */
+static uint32_t get_ring_successor(void) {
+    /* TODO: Implement proper ring topology based on node IDs */
+    /* For now, return next node ID in sequence */
+    uint32_t my_id = ha_get_node_id();
+    uint32_t next_id = my_id + 1;
+    
+    /* Wrap around if needed (assuming max 5 masters) */
+    if (next_id > 5) {
+        next_id = 1;
+    }
+    
+    /* Skip self */
+    if (next_id == my_id) {
+        next_id++;
+        if (next_id > 5) {
+            next_id = 1;
+        }
+    }
+    
+    return next_id;
+}
+
 /* Process metadata entry from peer */
 static void metasync_process_entry(uint64_t version, const uint8_t *data, uint32_t length) {
     /* Store in CRDT and replay */
@@ -311,6 +336,25 @@ void metasync_handle_message(uint32_t peerid, const uint8_t *data, uint32_t leng
                 
                 if (length >= 12 + entry_size) {
                     metasync_process_entry(version, ptr, entry_size);
+                    
+                    /* Forward to next node in ring if we're not the leader */
+                    if (!raft_is_leader()) {
+                        uint32_t successor = get_ring_successor();
+                        uint8_t *fwd_msg = malloc(13 + entry_size);
+                        if (fwd_msg) {
+                            uint8_t *fwd_ptr = fwd_msg;
+                            put8bit(&fwd_ptr, METASYNC_ENTRY);
+                            put64bit(&fwd_ptr, version);
+                            put32bit(&fwd_ptr, entry_size);
+                            memcpy(fwd_ptr, ptr, entry_size);
+                            
+                            haconn_send_meta_sync_to_peer(successor, fwd_msg, 13 + entry_size);
+                            free(fwd_msg);
+                            
+                            mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "ring-ship: forwarded v%"PRIu64" to successor %u", 
+                                    version, successor);
+                        }
+                    }
                 }
             }
             break;
@@ -452,4 +496,55 @@ void metasync_get_status(uint64_t *local_version, uint64_t *highest_peer_version
     }
     
     pthread_mutex_unlock(&sync_state.mutex);
+}
+
+/* Request specific version range from a peer */
+void metasync_request_versions(uint32_t node_id, uint64_t from_version, uint64_t to_version) {
+    uint8_t msg[20];
+    uint8_t *ptr = msg;
+    
+    /* Build message: type + from_version + to_version */
+    put8bit(&ptr, METASYNC_RANGE_REQ);
+    put64bit(&ptr, from_version);
+    put64bit(&ptr, to_version);
+    
+    /* Send to specific peer */
+    haconn_send_meta_sync_to_peer(node_id, msg, 17);
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: requesting versions %"PRIu64"-%"PRIu64" from node %u", 
+            from_version, to_version, node_id);
+}
+
+/* Send changelog entry to ring successor for log shipping */
+void metasync_ship_to_ring(uint64_t version, const uint8_t *data, uint32_t length) {
+    uint32_t successor;
+    uint8_t *msg;
+    uint8_t *ptr;
+    
+    /* Only the leader initiates ring shipping */
+    if (!raft_is_leader()) {
+        return;
+    }
+    
+    /* Get ring successor */
+    successor = get_ring_successor();
+    
+    /* Build message: type + version + length + data */
+    msg = malloc(13 + length);
+    if (!msg) {
+        return;
+    }
+    
+    ptr = msg;
+    put8bit(&ptr, METASYNC_ENTRY);
+    put64bit(&ptr, version);
+    put32bit(&ptr, length);
+    memcpy(ptr, data, length);
+    
+    /* Send to successor */
+    haconn_send_meta_sync_to_peer(successor, msg, 13 + length);
+    free(msg);
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "ring-ship: sent v%"PRIu64" to successor %u (%u bytes)", 
+            version, successor, length);
 }

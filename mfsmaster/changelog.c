@@ -221,11 +221,16 @@ void changelog_rotate(uint8_t rotate_flags) {
 }
 
 void changelog_mr(uint64_t version,const char *data) {
-	// HA Integration: Propagate changelog entries through dedicated mechanism
+	// HA Integration: Propagate changelog entries through ring-based log shipping
 	if (ha_mode_enabled()) {
-		// Use gossip to propagate changelog entries (not CRDT)
 		uint32_t data_len = strlen(data) + 1;
+		
+		// First send to all HA peers directly
 		gossip_broadcast_changelog_entry(version, data, data_len);
+		
+		// Then initiate ring shipping if we're the leader
+		extern void metasync_ship_to_ring(uint64_t version, const uint8_t *data, uint32_t length);
+		metasync_ship_to_ring(version, (const uint8_t*)data, data_len);
 	}
 	
 	if (ChangelogSaveMode==SAVEMODE_BACKGROUND) {
