@@ -372,6 +372,9 @@ static void raft_become_leader(void) {
 	now = (uint64_t)time(NULL);
 	raft_state.leader_lease_expiry = now + raft_state.lease_duration;
 	
+	mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Became leader: node_id=%u, lease_expiry=%"PRIu64" (now=%"PRIu64", duration=%"PRIu64")",
+	        local_node_id, raft_state.leader_lease_expiry, now, raft_state.lease_duration);
+	
 	/* Ensure version is up to date */
 	uint64_t meta_ver = meta_version();
 	if (meta_ver > raft_state.current_version) {
