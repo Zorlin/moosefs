@@ -76,6 +76,7 @@
 #include "multilan.h"
 #include "hamaster.h"
 #include "shardmgr.h"
+#include "raftconsensus.h"
 
 #define MaxPacketSize CLTOMA_MAXPACKETSIZE
 
@@ -1665,6 +1666,17 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 	uint32_t asize;
 	uint32_t sessionid;
 	uint8_t status;
+
+	/* In HA mode, only the leader should accept client registrations */
+	if (ha_mode_enabled() && !raft_is_leader()) {
+		uint32_t leader_id = raft_get_leader();
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client registration rejected - not leader (leader is node %u)", leader_id);
+		
+		/* Send rejection response */
+		uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_FUSE_REGISTER, 1);
+		put8bit(&ptr, MFS_ERROR_EPERM); /* Operation not permitted - redirect to leader */
+		return;
+	}
 
 	if (length<64) {
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"CLTOMA_FUSE_REGISTER - wrong size (%"PRIu32"/<64)",length);

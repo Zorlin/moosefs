@@ -42,6 +42,7 @@
 #include "crdtstore.h"
 #include "gossip.h"
 #include "hamaster.h"
+#include "raftconsensus.h"
 
 #define MAXLOGLINESIZE 200000U
 #define MAXLOGNUMBER 1000U
@@ -283,6 +284,14 @@ void changelog(const char *format,...) {
 		/* Version allocation failed - cannot write changelog */
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_ERR,"changelog: cannot write - no version available");
 		return;
+	}
+
+	/* In HA mode, replicate changelog entry through Raft */
+	if (ha_mode_enabled() && raft_is_leader()) {
+		/* Append changelog entry to Raft log for replication */
+		if (raft_append_entry(RAFT_ENTRY_CHANGELOG, (uint8_t*)printbuff, leng, version) < 0) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"changelog: failed to append to Raft log - version %"PRIu64, version);
+		}
 	}
 
 	changelog_mr(version,printbuff);

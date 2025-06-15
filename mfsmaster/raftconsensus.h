@@ -86,6 +86,12 @@ typedef struct raft_context {
 	uint64_t election_start; /* When current election started */
 } raft_context_t;
 
+/* Raft log entry types */
+typedef enum {
+	RAFT_ENTRY_CHANGELOG = 1,  /* Changelog entry for metadata operations */
+	RAFT_ENTRY_NOOP = 2        /* No-op entry for heartbeats */
+} raft_entry_type_t;
+
 /* Raft message types */
 typedef enum {
 	RAFT_MSG_REQUEST_VOTE,

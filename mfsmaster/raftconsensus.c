@@ -27,6 +27,7 @@
 #include "hamaster.h"
 #include "main.h"
 #include "metadata.h"
+#include "restore.h"
 
 /* Global Raft state - single group, no sharding */
 static raft_context_t raft_state;
@@ -642,16 +643,51 @@ static void raft_apply_committed_entries(void) {
 	entry = raft_state.log_head;
 	while (entry && entry->index <= raft_state.commit_index) {
 		if (entry->index > raft_state.last_applied) {
-			/* Apply this entry */
-			/* For now, just update our version */
+			/* Apply this entry based on its type */
+			switch (entry->type) {
+				case RAFT_ENTRY_CHANGELOG:
+					/* Apply changelog entry to filesystem */
+					if (entry->data && entry->data_size > 0) {
+						/* Make sure data is null-terminated for changelog_apply_string */
+						char *changelog_str = malloc(entry->data_size + 1);
+						if (changelog_str) {
+							memcpy(changelog_str, entry->data, entry->data_size);
+							changelog_str[entry->data_size] = '\0';
+							
+							/* Apply the changelog entry to update local metadata */
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Applying changelog entry: %s", changelog_str);
+							uint32_t restore_status;
+							if (restore_net(entry->version, changelog_str, &restore_status) < 0) {
+								mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Failed to apply changelog entry for version %"PRIu64": %s", 
+								        entry->version, changelog_str);
+							}
+							
+							free(changelog_str);
+						} else {
+							mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Failed to allocate memory for changelog entry");
+						}
+					}
+					break;
+					
+				case RAFT_ENTRY_NOOP:
+					/* No-op entry, just for log consistency */
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Applied no-op entry %"PRIu64, entry->index);
+					break;
+					
+				default:
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "Unknown Raft entry type %u", entry->type);
+					break;
+			}
+			
+			/* Update our version */
 			if (entry->version > raft_state.current_version) {
 				raft_state.current_version = entry->version;
 			}
 			
 			raft_state.last_applied = entry->index;
 			
-			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Applied log entry %"PRIu64" version %"PRIu64,
-			        entry->index, entry->version);
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Applied log entry %"PRIu64" version %"PRIu64" type %u",
+			        entry->index, entry->version, entry->type);
 		}
 		entry = entry->next;
 	}
@@ -841,6 +877,7 @@ uint64_t raft_get_current_version(void) {
 	
 	return version;
 }
+
 
 /* Check if we have minimum peers for quorum */
 static int raft_has_minimum_peers(void) {
