@@ -300,19 +300,23 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 				break;
 			}
 			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: received CRDT delta, length=%u from peer %u", length, conn->peerid);
+			
+			/* Debug: Hex dump first 32 bytes */
+			if (length > 0) {
+				char hex_dump[256];
+				uint32_t dump_len = (length > 32) ? 32 : length;
+				char *hex_ptr = hex_dump;
+				for (uint32_t i = 0; i < dump_len; i++) {
+					sprintf(hex_ptr, "%02X ", data[i]);
+					hex_ptr += 3;
+				}
+				*hex_ptr = '\0';
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: CRDT delta hex dump (%u bytes): %s", dump_len, hex_dump);
+			}
+			
 			if (length >= 32) {
 				crdt_entry_t *entry = NULL;
 				crdt_store_t *store = crdtstore_get_main_store();
-				
-				/* Debug: Log first few bytes of data */
-				if (length >= 8) {
-					const uint8_t *ptr = data;
-					uint64_t first_8_bytes = 0;
-					for (int i = 0; i < 8; i++) {
-						first_8_bytes = (first_8_bytes << 8) | ptr[i];
-					}
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn: CRDT delta first 8 bytes: 0x%016"PRIx64, first_8_bytes);
-				}
 				
 				if (crdtstore_deserialize_entry(data, length, &entry) == 0 && entry != NULL) {
 					if (crdtstore_merge(store, entry) == 0) {
@@ -894,6 +898,19 @@ void haconn_send_crdt_delta(const uint8_t *data, uint32_t length) {
 	uint8_t *ptr;
 	
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_crdt_delta: broadcasting %u bytes", length);
+	
+	/* Debug: Hex dump first 32 bytes of outgoing data */
+	if (length > 0) {
+		char hex_dump[256];
+		uint32_t dump_len = (length > 32) ? 32 : length;
+		char *hex_ptr = hex_dump;
+		for (uint32_t i = 0; i < dump_len; i++) {
+			sprintf(hex_ptr, "%02X ", data[i]);
+			hex_ptr += 3;
+		}
+		*hex_ptr = '\0';
+		mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "haconn_send_crdt_delta: sending hex dump (%u bytes): %s", dump_len, hex_dump);
+	}
 	
 	for (conn = haconn_head; conn; conn = conn->next) {
 		if (conn->mode == HACONN_CONNECTED) {
