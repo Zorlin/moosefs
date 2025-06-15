@@ -799,9 +799,17 @@ void masterconn_reportload(void) {
 	
 	// Report load to all registered masters
 	job_get_load_and_hlstatus(&load,&hltosend);
+	
+	// First, count connections
+	int conn_count = 0;
 	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"reportload: checking connection mode=%d, registerstate=%d for %s:%u",
-		        eptr->mode,eptr->registerstate,eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
+		conn_count++;
+	}
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"reportload: found %d master connections",conn_count);
+	
+	for (eptr = masterconnections; eptr != NULL; eptr = eptr->next) {
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"reportload: checking connection mode=%d, registerstate=%d, masterversion=%08X for %s:%u",
+		        eptr->mode,eptr->registerstate,eptr->masterversion,eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 		if (eptr->mode==DATA && eptr->masterversion>=VERSION2INT(1,6,28) && eptr->registerstate==REGISTERED) {
 			if (eptr->masterversion>=VERSION2INT(3,0,7)) {
 				rebalance = hdd_is_rebalance_on();
@@ -831,6 +839,7 @@ void masterconn_reportload(void) {
 				buff = masterconn_create_attached_packet(eptr,CSTOMA_CURRENT_LOAD,4);
 				put32bit(&buff,load);
 			}
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"reportload: sent CSTOMA_CURRENT_LOAD to %s:%u",eptr->hostname?eptr->hostname:"unknown",eptr->masterport);
 		}
 	}
 }
