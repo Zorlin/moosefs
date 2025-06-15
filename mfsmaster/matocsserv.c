@@ -3661,7 +3661,7 @@ void matocsserv_serve(struct pollfd *pdesc) {
 					put32bit(&ptr,5); /* length: 1 byte flag + 4 bytes IP */
 					put8bit(&ptr,1); /* redirect flag */
 					put32bit(&ptr,leader_ip);
-					tcptowrite(ns,redirect_msg,13,1000);
+					tcptowrite(ns,redirect_msg,13,1000,1000);
 				} else {
 					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"no leader available to redirect chunkserver");
 				}
