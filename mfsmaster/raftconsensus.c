@@ -760,8 +760,10 @@ void raftconsensus_tick(double now) {
 				if (now_seconds > raft_state.leader_lease_expiry - 5) {
 					/* Lease about to expire - renew by sending heartbeats */
 					raft_state.leader_lease_expiry = now_seconds + raft_state.lease_duration;
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Renewed leader lease until %"PRIu64" (now=%"PRIu64")",
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Renewed leader lease until %"PRIu64" (now=%"PRIu64") - sending heartbeats",
 					        raft_state.leader_lease_expiry, now_seconds);
+					/* Actually send heartbeats to maintain the lease */
+					raft_send_heartbeats_internal();
 				}
 			}
 			break;
