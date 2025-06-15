@@ -4369,11 +4369,7 @@ static inline void chunk_mfr_state_check(chunk *c) {
 }
 
 void chunk_server_has_chunk(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint32_t version) {
-	/* In HA mode, only leaders should make chunk management decisions */
-	if (ha_mode_enabled() && !raft_is_leader()) {
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"chunk_server_has_chunk: follower skipping chunk management for %016"PRIX64" - defer to leader",chunkid);
-		return;
-	}
+	uint8_t is_leader = !ha_mode_enabled() || raft_is_leader();
 	chunk *c;
 	slist *s;
 	uint8_t fix;
@@ -4395,6 +4391,11 @@ void chunk_server_has_chunk(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint32_t
 	}
 
 	if (c==NULL) {
+		/* In HA mode, only leaders should create new chunks for nonexistent chunks reported by chunkservers */
+		if (!is_leader) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"chunk_server_has_chunk: follower skipping chunk creation for nonexistent %016"PRIX64" - will be handled by leader",chunkid);
+			return;
+		}
 #ifndef MFSDEBUG
 		if (loglastts+60<main_time()) {
 			ilogcount=0;
@@ -4511,6 +4512,7 @@ void chunk_server_has_chunk(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint32_t
 void chunk_damaged(uint16_t csid,uint64_t chunkid,uint8_t ecid) {
 	chunk *c;
 	slist *s;
+	uint8_t is_leader = !ha_mode_enabled() || raft_is_leader();
 
 	if (chunk_check_ecid(ecid)<0) { // just ignore chunks with unrecognized ecid
 		return;
@@ -4518,6 +4520,11 @@ void chunk_damaged(uint16_t csid,uint64_t chunkid,uint8_t ecid) {
 
 	c = chunk_find(chunkid);
 	if (c==NULL) {
+		/* In HA mode, only leaders should create new chunks for damaged nonexistent chunks */
+		if (!is_leader) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"chunk_damaged: follower skipping chunk creation for nonexistent %016"PRIX64" - will be handled by leader",chunkid);
+			return;
+		}
 		if (chunkid>nextchunkid+UINT64_C(1000000000)) {
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"chunkserver has nonexistent chunk (%016"PRIX64"), id looks wrong - just ignore it",chunkid);
 			return;
@@ -4588,11 +4595,16 @@ void chunk_lost(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint8_t report) {
 		}
 	}
 	if (c->lockedto<(uint32_t)main_time() && c->operation==NONE && c->slisthead==NULL && c->fhead==FLISTNULLINDX && chunk_counters_in_progress()==0 && csdb_have_all_servers()) {
-		changelog("%"PRIu32"|CHUNKDEL(%"PRIu64",%"PRIu32")",main_time(),c->chunkid,c->version);
-		if (c->ondangerlist) {
-			chunk_priority_remove(c);
+		/* In HA mode, only leaders should delete chunks */
+		if (!ha_mode_enabled() || raft_is_leader()) {
+			changelog("%"PRIu32"|CHUNKDEL(%"PRIu64",%"PRIu32")",main_time(),c->chunkid,c->version);
+			if (c->ondangerlist) {
+				chunk_priority_remove(c);
+			}
+			chunk_delete(c);
+		} else {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"chunk_lost: follower skipping chunk deletion for %016"PRIX64" - will be handled by leader",c->chunkid);
 		}
-		chunk_delete(c);
 	} else {
 		chunk_priority_queue_check(c,1);
 		chunk_mfr_state_check(c);
