@@ -258,27 +258,12 @@ static int gvc_request_version_range(uint32_t count) {
             min_version = meta_ver;
         }
         
-        /* Add a small safety margin to avoid conflicts */
-        /* Only add margin if we haven't allocated recently */
-        if (gvc_state.local_version_end == 0 || 
-            min_version > gvc_state.local_version_end + 1000) {
-            /* First allocation or big gap - add safety margin */
-            uint64_t old_version = min_version;
-            min_version = min_version + (10 * node_id);
-            
-            if (min_version > gvc_state.current_version) {
-                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "GVC adjusting version from %"PRIu64" to %"PRIu64" (added %"PRIu64" for node %u safety margin)",
-                        old_version, min_version, min_version - old_version, node_id);
-                gvc_state.current_version = min_version;
-            }
-        } else {
-            /* Continue from where we left off */
-            if (min_version < gvc_state.local_version_end) {
-                min_version = gvc_state.local_version_end;
-            }
+        /* Update current version to the highest known */
+        if (min_version > gvc_state.current_version) {
             gvc_state.current_version = min_version;
         }
         
+        /* Allocate sequential versions with NO GAPS */
         range.start = gvc_state.current_version;
         range.end = gvc_state.current_version + count;
         gvc_state.current_version = range.end;
