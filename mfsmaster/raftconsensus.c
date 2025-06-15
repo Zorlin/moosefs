@@ -765,6 +765,19 @@ void raftconsensus_tick(double now) {
 			break;
 			
 		case RAFT_STATE_LEADER:
+			/* Check lease renewal first - renew if within 5 seconds of expiry */
+			{
+				uint64_t now_seconds = (uint64_t)time(NULL);
+				if (now_seconds > raft_state.leader_lease_expiry - 5) {
+					/* Lease about to expire - renew by sending heartbeats */
+					raft_state.leader_lease_expiry = now_seconds + raft_state.lease_duration;
+					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Renewed leader lease until %"PRIu64" (now=%"PRIu64") - sending heartbeats",
+					        raft_state.leader_lease_expiry, now_seconds);
+					/* Actually send heartbeats to maintain the lease */
+					raft_send_heartbeats_internal();
+				}
+			}
+			
 			/* Check if lease has expired - if so, step down */
 			{
 				uint64_t now_seconds = (uint64_t)time(NULL);
@@ -784,19 +797,6 @@ void raftconsensus_tick(double now) {
 				pthread_mutex_unlock(&raft_mutex);
 				raft_send_heartbeats();
 				return;
-			}
-			
-			/* Check lease expiry using real UNIX time */
-			{
-				uint64_t now_seconds = (uint64_t)time(NULL);
-				if (now_seconds > raft_state.leader_lease_expiry - 5) {
-					/* Lease about to expire - renew by sending heartbeats */
-					raft_state.leader_lease_expiry = now_seconds + raft_state.lease_duration;
-					mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "Renewed leader lease until %"PRIu64" (now=%"PRIu64") - sending heartbeats",
-					        raft_state.leader_lease_expiry, now_seconds);
-					/* Actually send heartbeats to maintain the lease */
-					raft_send_heartbeats_internal();
-				}
 			}
 			break;
 	}
