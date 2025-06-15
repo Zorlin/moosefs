@@ -2509,5 +2509,11 @@
 #define MATOCL_HA_SHARD_REDIRECT (PROTO_BASE+717)
 // status:8 [ redirecthost:32 redirectport:16 ]
 
+#define CLTOMA_HA_LEADER_REDIRECT_REQUEST (PROTO_BASE+718)
+// (no data)
+// Answer:
+#define MATOCL_HA_LEADER_REDIRECT (PROTO_BASE+719)
+// leader_ip:32 leader_port:16
+
 
 #endif

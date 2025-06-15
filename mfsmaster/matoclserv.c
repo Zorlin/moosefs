@@ -1678,9 +1678,8 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 		
 		/* Try to get leader connection information for redirection */
 		if (leader_id != 0 && haconn_get_leader_info(leader_id, &leader_ip, &leader_port) == 0) {
-			/* Send redirection response with leader info */
-			uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_FUSE_REGISTER, 7);
-			put8bit(&ptr, MFS_ERROR_EPERM); /* Operation not permitted - redirect to leader */
+			/* Send custom redirection response with leader info */
+			uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_HA_LEADER_REDIRECT, 6);
 			put32bit(&ptr, leader_ip);      /* Leader IP address */
 			put16bit(&ptr, leader_port);    /* Leader port */
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client redirection: leader is at %u.%u.%u.%u:%u", 
@@ -1688,7 +1687,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 		} else {
 			/* Send standard rejection response */
 			uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_FUSE_REGISTER, 1);
-			put8bit(&ptr, MFS_ERROR_EPERM); /* Operation not permitted - redirect to leader */
+			put8bit(&ptr, MFS_ERROR_EPERM); /* Operation not permitted - no leader info */
 			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"Client redirection: leader info not available (leader_id=%u)", leader_id);
 		}
 		return;
