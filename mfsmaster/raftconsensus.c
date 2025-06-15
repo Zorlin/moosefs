@@ -190,12 +190,15 @@ uint64_t raft_get_next_version(void) {
 			        now, raft_state.leader_lease_expiry);
 		}
 	} else {
-		/* Not leader */
-		if (raft_state.current_leader != 0) {
-			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Not Raft leader (leader is %u) - cannot allocate version", 
+		/* Not leader - for multi-master compatibility, followers should not allocate versions */
+		if (raft_state.current_leader != 0 && raft_state.current_leader != local_node_id) {
+			/* We know who the leader is, but we cannot allocate versions locally */
+			/* In a production system, this would forward the request to the leader */
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "Not Raft leader (leader is %u) - version allocation denied", 
 			        raft_state.current_leader);
 		} else {
-			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "No Raft leader known - cannot allocate version (state=%d)", 
+			/* No leader known - system is not ready for writes */
+			mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "No Raft leader available - version allocation denied (state=%d)", 
 			        raft_state.state);
 		}
 	}

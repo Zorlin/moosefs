@@ -1770,7 +1770,12 @@ uint64_t meta_version_inc(void) {
 			return metaversion;
 		}
 		/* Cannot allocate version - operation must fail */
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"meta_version_inc: cannot allocate version - no GVC leader");
+		static uint64_t last_warning = 0;
+		uint64_t now = (uint64_t)time(NULL);
+		if (now - last_warning > 10) {  /* Log warning at most every 10 seconds */
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"meta_version_inc: cannot allocate version - no GVC leader available");
+			last_warning = now;
+		}
 		return 0;
 	}
 	/* Non-HA mode: simple increment */
