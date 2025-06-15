@@ -1166,6 +1166,7 @@ void csdb_sync_from_crdt(void) {
 				if (e->maintenance != MAINTENANCE_OFF) {
 					disconnected_servers_in_maintenance++;
 				}
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"csdb: disconnected servers counter incremented to %u (maintenance=%u)",disconnected_servers,disconnected_servers_in_maintenance);
 			}
 			/* If it's already disconnected or doesn't exist, nothing to do */
 			continue;

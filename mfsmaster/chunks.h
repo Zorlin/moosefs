@@ -121,6 +121,7 @@ void chunk_lost(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint8_t report);
 void chunk_server_register_end(uint16_t csid);
 void chunk_server_disconnected(uint16_t csid);
 void chunk_reset_register_counters(void);
+void chunk_clear_disconnection_state(void);
 
 void chunk_got_delete_status(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint8_t status);
 void chunk_got_replicate_status(uint16_t csid,uint64_t chunkid,uint8_t ecid,uint32_t version,uint8_t status);

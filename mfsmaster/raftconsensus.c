@@ -479,6 +479,9 @@ static void raft_become_leader(void) {
 	/* Send initial heartbeats (we already hold the mutex) */
 	raft_send_heartbeats_internal();
 	
+	/* Clear stale disconnection state after becoming leader */
+	chunk_clear_disconnection_state();
+	
 	/* Reset chunk server registration counters after becoming leader */
 	chunk_reset_register_counters();
 }

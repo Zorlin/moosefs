@@ -4733,18 +4733,48 @@ void chunk_server_disconnected(uint16_t csid) {
 void chunk_reset_register_counters(void) {
 	uint16_t csid;
 	uint16_t unregistered_count = 0;
+	uint16_t valid_count = 0;
+	uint16_t registered_count = 0;
 	
 	/* Count unregistered but valid chunkservers */
 	for (csid = csusedhead ; csid < MAXCSCOUNT ; csid = cstab[csid].next) {
-		if (cstab[csid].valid && cstab[csid].registered==0) {
-			unregistered_count++;
+		if (cstab[csid].valid) {
+			valid_count++;
+			if (cstab[csid].registered==0) {
+				unregistered_count++;
+			} else {
+				registered_count++;
+			}
 		}
 	}
+	
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunk_reset_register_counters: valid=%u, registered=%u, unregistered=%u, csregisterinprogress=%u",
+	        valid_count, registered_count, unregistered_count, csregisterinprogress);
 	
 	if (csregisterinprogress != unregistered_count) {
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"fixing csregisterinprogress counter: %u -> %u", csregisterinprogress, unregistered_count);
 		csregisterinprogress = unregistered_count;
 	}
+}
+
+void chunk_clear_disconnection_state(void) {
+	discserv *ds,*nds;
+	
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"clearing disconnection state on leadership change");
+	
+	/* Clear the current disconnection list */
+	for (ds = discservers; ds; ds = nds) {
+		nds = ds->next;
+		free(ds);
+	}
+	discservers = NULL;
+	
+	/* Clear the pending disconnection list */
+	for (ds = discservers_next; ds; ds = nds) {
+		nds = ds->next;
+		free(ds);
+	}
+	discservers_next = NULL;
 }
 
 void chunk_server_disconnection_loop(void) {
