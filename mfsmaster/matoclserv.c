@@ -1677,6 +1677,15 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 		
 		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"Client registration rejected - not leader (my_node=%u, leader=%u)", my_node_id, leader_id);
 		
+		/* Sanity check - don't redirect to ourselves */
+		if (leader_id == my_node_id) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"Client registration: leadership inconsistency detected - skipping redirect");
+			/* Send standard rejection instead of redirect */
+			uint8_t *ptr = matoclserv_create_packet(eptr, MATOCL_FUSE_REGISTER, 1);
+			put8bit(&ptr, MFS_ERROR_EPERM);
+			return;
+		}
+		
 		/* Try to get leader connection information for redirection */
 		if (leader_id != 0 && haconn_get_leader_info(leader_id, &leader_ip, &leader_port) == 0) {
 			/* Send custom redirection response with leader info */
