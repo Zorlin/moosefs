@@ -31,7 +31,7 @@
 #include "main.h"
 #include "gvc.h"
 #include <pthread.h>
-#include "metasync.h"
+#include "ringrepl.h"
 #include "raftconsensus.h"
 #include "main.h"
 
