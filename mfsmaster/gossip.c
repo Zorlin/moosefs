@@ -358,8 +358,8 @@ static void gossip_process_message(uint8_t *buffer, ssize_t len, struct sockaddr
 			        sender_id, sender_version, my_version);
 			
 			/* Request missing versions from this node */
-			extern void metasync_request_versions(uint32_t node_id, uint64_t from_version, uint64_t to_version);
-			metasync_request_versions(sender_id, my_version + 1, sender_version);
+			extern void ringrepl_request_range(uint64_t from_version, uint64_t to_version);
+			ringrepl_request_range(my_version + 1, sender_version);
 		}
 		
 		if (sender_node->state != NODE_STATE_ALIVE) {
@@ -423,8 +423,8 @@ static void gossip_process_message(uint8_t *buffer, ssize_t len, struct sockaddr
 								        node_id, node_current_version, my_version);
 								
 								/* Request missing versions */
-								extern void metasync_request_versions(uint32_t node_id, uint64_t from_version, uint64_t to_version);
-								metasync_request_versions(node_id, my_version + 1, node_current_version);
+								extern void ringrepl_request_range(uint64_t from_version, uint64_t to_version);
+								ringrepl_request_range(my_version + 1, node_current_version);
 							}
 						}
 					}
