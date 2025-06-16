@@ -381,11 +381,11 @@ static void haconn_gotpacket(haconn_t *conn, uint32_t type, const uint8_t *data,
 			break;
 			
 		case MFSHA_META_SYNC:
-			/* Forward to metadata syncer */
+			/* Forward to ring replication handler */
 			if (length >= 1) {
-				metasync_handle_message(conn->peerid, data, length);
+				ringrepl_handle_message(conn->peerid, data, length);
 			} else {
-				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid metadata sync size");
+				mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn: invalid ring replication message size");
 			}
 			break;
 			

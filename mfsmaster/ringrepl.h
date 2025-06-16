@@ -62,6 +62,9 @@ void ringrepl_periodic_check(void);
 /* Force full resync with peer */
 int ringrepl_force_resync(uint32_t peer_id, uint64_t from_version);
 
+/* Request specific range of changelog entries */
+void ringrepl_request_range(uint64_t from_version, uint64_t to_version);
+
 /* Ring message types */
 #define RING_MSG_ENTRY          0x11
 #define RING_MSG_ACK            0x12
@@ -71,6 +74,8 @@ int ringrepl_force_resync(uint32_t peer_id, uint64_t from_version);
 #define RING_MSG_BATCH_START    0x16
 #define RING_MSG_BATCH_END      0x17
 #define RING_MSG_HEARTBEAT      0x18
+#define RING_MSG_RANGE_REQ      0x19
+#define RING_MSG_RANGE_RESP     0x1A
 
 /* Ring configuration */
 #define RING_MAX_BATCH_SIZE     1000

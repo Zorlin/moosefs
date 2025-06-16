@@ -12,7 +12,6 @@
 #include "gvc.h"
 #include "changelog_replay.h"
 #include "changelog.h"
-#include "metasync.h"
 #include "ringrepl.h"
 #include <string.h>
 #include <stdlib.h>
@@ -90,7 +89,6 @@ int ha_initialize(void) {
         {gossip_init, "gossip protocol"},
         {gvc_init, "global version coordinator"},
         {changelog_replay_init, "changelog replay"},
-        {metasync_init, "metadata sync"},
         {ringrepl_init, "ring replication"},
         {haconn_init, "HA communication"},
         {NULL, NULL}
@@ -118,7 +116,6 @@ void ha_terminate(void) {
     // Terminate HA modules in reverse order
     haconn_term();
     ringrepl_term();
-    metasync_term();
     gossip_term();
     raftconsensus_term();
     
@@ -144,15 +141,12 @@ int ha_metadata_sync(void) {
         return 0; /* No-op if HA mode is not enabled */
     }
     
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA metadata sync: starting CRDT-based differences sync");
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA metadata sync: using ring replication for sync");
     
-    /* Perform CRDT-based metadata sync */
-    if (metasync_startup_sync() < 0) {
-        mfs_log(MFSLOG_SYSLOG, MFSLOG_ERR, "HA metadata sync: failed to sync metadata differences");
-        return -1;
-    }
+    /* Ring replication will handle all synchronization */
+    /* On startup, followers will receive any missing changelog entries through the ring */
     
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA metadata sync: CRDT differences sync completed successfully");
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA metadata sync: ring replication initialized");
     return 0;
 }
 
@@ -194,7 +188,7 @@ void ha_request_missing_changelog_range(uint64_t start_version, uint64_t end_ver
         mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "HA: changelog entries before %"PRIu64" not available locally (min=%"PRIu64"), requesting from peers", 
                 start_version, min_version);
         
-        /* Request from peers using metasync range request */
-        metasync_request_versions(0, start_version, end_version); /* 0 = broadcast to all peers */
+        /* Request from peers using ring replication range request */
+        ringrepl_request_range(start_version, end_version);
     }
 }

@@ -526,6 +526,32 @@ void ringrepl_handle_message(uint32_t peerid, const uint8_t *data, uint32_t leng
             break;
         }
         
+        case RING_MSG_RANGE_REQ: {
+            if (length >= 16) {
+                uint64_t from_version = get64bit(&ptr);
+                uint64_t to_version = get64bit(&ptr);
+                
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "ringrepl: peer %u requested range [%"PRIu64"-%"PRIu64"]",
+                        peerid, from_version, to_version);
+                
+                /* Send the requested changelog entries directly */
+                uint32_t count = changelog_get_old_changes(from_version,
+                    metasync_send_entry_to_peer, (void*)(uintptr_t)peerid,
+                    (to_version - from_version + 1));
+                
+                /* Send range response with count */
+                uint8_t resp[13];
+                uint8_t *rptr = resp;
+                put8bit(&rptr, RING_MSG_RANGE_RESP);
+                put64bit(&rptr, to_version);
+                put32bit(&rptr, count);
+                haconn_send_meta_sync_to_peer(peerid, resp, 13);
+                
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "ringrepl: sent %u entries to peer %u", count, peerid);
+            }
+            break;
+        }
+        
         default:
             mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "ringrepl: unknown message type %u from peer %u", 
                     msgtype, peerid);
@@ -692,4 +718,33 @@ int ringrepl_force_resync(uint32_t peer_id, uint64_t from_version) {
     
     pthread_mutex_unlock(&ring_state.mutex);
     return 0;
+}
+
+/* Request specific range of changelog entries */
+void ringrepl_request_range(uint64_t from_version, uint64_t to_version) {
+    uint8_t msg[32];
+    uint8_t *ptr = msg;
+    uint32_t i;
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "ringrepl: requesting range [%"PRIu64"-%"PRIu64"]", 
+            from_version, to_version);
+    
+    /* Build range request message */
+    put8bit(&ptr, RING_MSG_RANGE_REQ);
+    put64bit(&ptr, from_version);
+    put64bit(&ptr, to_version);
+    
+    /* Send to all peers in the ring */
+    pthread_mutex_lock(&ring_state.mutex);
+    
+    if (ring_state.ring_nodes && ring_state.ring_size > 0) {
+        for (i = 0; i < ring_state.ring_size; i++) {
+            uint32_t peer_id = ring_state.ring_nodes[i];
+            if (peer_id != ha_get_node_id()) {
+                haconn_send_meta_sync_to_peer(peer_id, msg, 17);
+            }
+        }
+    }
+    
+    pthread_mutex_unlock(&ring_state.mutex);
 }
