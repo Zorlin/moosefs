@@ -256,10 +256,8 @@ void ringrepl_term(void) {
 uint32_t ringrepl_get_successor(uint32_t node_id) {
     uint32_t i;
     
-    pthread_mutex_lock(&ring_state.mutex);
-    
+    /* Ring topology is read-only after initialization - no locking needed */
     if (!ring_state.ring_nodes || ring_state.ring_size == 0) {
-        pthread_mutex_unlock(&ring_state.mutex);
         return 0;
     }
     
@@ -269,34 +267,28 @@ uint32_t ringrepl_get_successor(uint32_t node_id) {
             /* Return next node in ring */
             uint32_t next_pos = (i + 1) % ring_state.ring_size;
             uint32_t successor = ring_state.ring_nodes[next_pos];
-            pthread_mutex_unlock(&ring_state.mutex);
             return successor;
         }
     }
     
-    pthread_mutex_unlock(&ring_state.mutex);
     return 0; /* Node not found */
 }
 
 /* Get all nodes in ring order */
 int ringrepl_get_ring_order(uint32_t *nodes, uint32_t *count) {
-    pthread_mutex_lock(&ring_state.mutex);
-    
+    /* Ring topology is read-only after initialization - no locking needed */
     if (!ring_state.ring_nodes || !nodes || !count) {
-        pthread_mutex_unlock(&ring_state.mutex);
         return -1;
     }
     
     if (*count < ring_state.ring_size) {
         *count = ring_state.ring_size;
-        pthread_mutex_unlock(&ring_state.mutex);
         return -1; /* Buffer too small */
     }
     
     memcpy(nodes, ring_state.ring_nodes, ring_state.ring_size * sizeof(uint32_t));
     *count = ring_state.ring_size;
     
-    pthread_mutex_unlock(&ring_state.mutex);
     return 0;
 }
 
