@@ -116,3 +116,7 @@ The project builds multiple packages:
 - **Start every session** by checking:
   1. `PROGRESS.md` - Review current project status and recent work
   2. TaskMaster MCP - Check active tasks and project planning
+
+## Metadata Compatibility
+
+- We MUST maintain 100% compatibility with the MooseFS metadata format and normal metaloggers. Users must be able to walk in with an existing cluster's metadata.mfs and load it, and export a copy of metadata.mfs that a normal MooseFS CE cluster would work with just fine.
