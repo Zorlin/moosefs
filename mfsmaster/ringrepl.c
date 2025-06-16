@@ -759,7 +759,13 @@ void ringrepl_request_range(uint64_t from_version, uint64_t to_version) {
         for (i = 0; i < ring_state.ring_size; i++) {
             uint32_t peer_id = ring_state.ring_nodes[i];
             if (peer_id != ha_get_node_id()) {
-                haconn_send_meta_sync_to_peer(peer_id, msg, 17);
+                if (haconn_is_peer_connected(peer_id)) {
+                    if (haconn_send_meta_sync_to_peer(peer_id, msg, 17) < 0) {
+                        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "ringrepl: failed to send range request to peer %u", peer_id);
+                    }
+                } else {
+                    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "ringrepl: peer %u not connected, skipping range request", peer_id);
+                }
             }
         }
     }

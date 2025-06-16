@@ -89,8 +89,8 @@ int ha_initialize(void) {
         {gossip_init, "gossip protocol"},
         {gvc_init, "global version coordinator"},
         {changelog_replay_init, "changelog replay"},
-        {ringrepl_init, "ring replication"},
         {haconn_init, "HA communication"},
+        {ringrepl_init, "ring replication"},
         {NULL, NULL}
     };
     
