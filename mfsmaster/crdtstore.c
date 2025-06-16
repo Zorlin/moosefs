@@ -885,10 +885,19 @@ int crdt_cluster_sync_attempt(void) {
 	}
 	
 	peer = strtok_r(peers_copy, ",", &saveptr);
+	uint32_t peer_position = 1;
 	while (peer != NULL) {
 		char *colon_pos;
 		char *host;
 		int port = 9421; /* Default MooseFS master port */
+		
+		/* Skip self */
+		if (peer_position == atol(ha_node_id_env)) {
+			mfs_log(MFSLOG_SYSLOG_STDERR, MFSLOG_DEBUG, "skipping self: %s:%d (position %u)", peer, port, peer_position);
+			peer = strtok_r(NULL, ",", &saveptr);
+			peer_position++;
+			continue;
+		}
 		
 		attempts_made++;
 		
