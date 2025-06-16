@@ -89,13 +89,13 @@ static int ringrepl_init_topology(void) {
         return -1;
     }
     
-    /* First pass: count peers */
+    /* First pass: count peers (includes self) */
     peer = strtok_r(peers_copy, ",", &saveptr);
     while (peer != NULL) {
         node_count++;
         peer = strtok_r(NULL, ",", &saveptr);
     }
-    node_count++; /* Add self */
+    /* Don't add self - already included in peer list */
     
     /* Allocate node array */
     temp_nodes = malloc(node_count * sizeof(uint32_t));
