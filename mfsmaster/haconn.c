@@ -1176,7 +1176,7 @@ void haconn_send_meta_sync(const uint8_t *data, uint32_t length) {
 }
 
 /* Send metadata sync message to specific peer */
-void haconn_send_meta_sync_to_peer(uint32_t peerid, const uint8_t *data, uint32_t length) {
+int haconn_send_meta_sync_to_peer(uint32_t peerid, const uint8_t *data, uint32_t length) {
 	haconn_t *conn;
 	uint8_t *ptr;
 	
@@ -1185,10 +1185,12 @@ void haconn_send_meta_sync_to_peer(uint32_t peerid, const uint8_t *data, uint32_
 			ptr = haconn_createpacket(conn, MFSHA_META_SYNC, length);
 			if (ptr) {
 				memcpy(ptr, data, length);
+				return 0; /* Success */
 			}
-			break;
+			return -1; /* Failed to create packet */
 		}
 	}
+	return -1; /* Peer not connected */
 }
 
 /* Send changelog entry to all peers */
@@ -1327,5 +1329,17 @@ int haconn_get_leader_info(uint32_t leader_id, uint32_t *leader_ip, uint16_t *le
 	/* Leader not found in connections or config */
 	mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "haconn_get_leader_info: leader %u not found in connections or config", leader_id);
 	return -1;
+}
+
+/* Check if peer connection is established */
+int haconn_is_peer_connected(uint32_t peer_id) {
+	haconn_t *conn;
+	
+	for (conn = haconn_head; conn != NULL; conn = conn->next) {
+		if (conn->peerid == peer_id && conn->mode == HACONN_CONNECTED) {
+			return 1; /* Connected */
+		}
+	}
+	return 0; /* Not connected */
 }
 

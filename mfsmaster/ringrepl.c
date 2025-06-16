@@ -313,6 +313,14 @@ static void ringrepl_send_batch(uint32_t peer_id) {
         return;
     }
     
+    /* Check if peer connection is available before attempting to send */
+    extern int haconn_is_peer_connected(uint32_t peer_id);
+    if (!haconn_is_peer_connected(peer_id)) {
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "ringrepl: peer %u not connected, deferring batch send", peer_id);
+        progress->state = RING_STATE_IDLE;  /* Will retry later when connection is available */
+        return;
+    }
+    
     /* Determine version range to send */
     start_version = progress->last_acked_version + 1;
     end_version = progress->target_version;
@@ -328,7 +336,12 @@ static void ringrepl_send_batch(uint32_t peer_id) {
     put64bit(&ptr, start_version);
     put64bit(&ptr, end_version);
     put32bit(&ptr, ha_get_node_id());  /* Send our node ID, not peer's */
-    haconn_send_meta_sync_to_peer(peer_id, msg, 21);
+    if (haconn_send_meta_sync_to_peer(peer_id, msg, 21) < 0) {
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "ringrepl: failed to send batch start to peer %u", peer_id);
+        progress->state = RING_STATE_RETRYING;
+        progress->retry_count++;
+        return;
+    }
     
     /* Send entries from changelog buffer */
     count = changelog_get_old_changes(start_version, metasync_send_entry_to_peer, 
@@ -340,7 +353,12 @@ static void ringrepl_send_batch(uint32_t peer_id) {
     put8bit(&ptr, RING_MSG_BATCH_END);
     put64bit(&ptr, end_version);
     put32bit(&ptr, count);
-    haconn_send_meta_sync_to_peer(peer_id, msg, 13);
+    if (haconn_send_meta_sync_to_peer(peer_id, msg, 13) < 0) {
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "ringrepl: failed to send batch end to peer %u", peer_id);
+        progress->state = RING_STATE_RETRYING;
+        progress->retry_count++;
+        return;
+    }
     
     /* Update progress */
     progress->last_sent_version = end_version;
