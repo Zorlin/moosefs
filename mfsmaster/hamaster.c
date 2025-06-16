@@ -13,6 +13,7 @@
 #include "changelog_replay.h"
 #include "changelog.h"
 #include "metasync.h"
+#include "ringrepl.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -90,6 +91,7 @@ int ha_initialize(void) {
         {gvc_init, "global version coordinator"},
         {changelog_replay_init, "changelog replay"},
         {metasync_init, "metadata sync"},
+        {ringrepl_init, "ring replication"},
         {haconn_init, "HA communication"},
         {NULL, NULL}
     };
@@ -115,6 +117,7 @@ void ha_terminate(void) {
     
     // Terminate HA modules in reverse order
     haconn_term();
+    ringrepl_term();
     metasync_term();
     gossip_term();
     raftconsensus_term();

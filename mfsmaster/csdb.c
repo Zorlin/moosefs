@@ -42,7 +42,6 @@
 #include "multilan.h"
 #include "sockets.h"
 #include "hamaster.h"
-#include "crdtstore.h"
 #include "raftconsensus.h"
 
 #define CSDB_OP_ADD 0
@@ -254,25 +253,9 @@ void* csdb_new_connection(uint32_t ip,uint16_t port,uint16_t csid,void *eptr) {
 	servers++;
 	changelog("%"PRIu32"|CSDBOP(%u,%"PRIu32",%"PRIu16",%"PRIu16")",main_time(),CSDB_OP_ADD,ip,port,csptr->csid);
 	
-	/* In HA mode, also store chunkserver in CRDT for replication */
+	/* Log chunkserver registration in HA mode */
 	if (ha_mode_enabled()) {
-		mfs_chunkserver_t cs;
-		crdt_store_t *store;
-		
-		memset(&cs, 0, sizeof(cs));
-		cs.servip = ip;
-		cs.servport = port;
-		cs.csid = csptr->csid;
-		cs.registered = 1;  /* Mark as registered */
-		
-		store = crdtstore_get_main_store();
-		if (store != NULL) {
-			if (crdtstore_put_chunkserver(store, &cs) < 0) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"csdb: failed to store chunkserver in CRDT: %s:%"PRIu16, strip, port);
-			} else {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb: stored chunkserver in CRDT: %s:%"PRIu16" (csid=%"PRIu16")", strip, port, csptr->csid);
-			}
-		}
+		mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb: registered chunkserver %s:%"PRIu16" (csid=%"PRIu16") in HA mode", strip, port, csptr->csid);
 	}
 	
 	return csptr;
@@ -301,26 +284,10 @@ void csdb_lost_connection(void *v_csptr) {
 			disconnected_servers_in_maintenance++;
 		}
 		
-		/* In HA mode, update chunkserver as disconnected in CRDT */
+		/* Log chunkserver disconnection in HA mode */
 		if (ha_mode_enabled()) {
-			mfs_chunkserver_t cs;
-			crdt_store_t *store;
-			
-			memset(&cs, 0, sizeof(cs));
-			cs.servip = csptr->ip;
-			cs.servport = csptr->port;
-			cs.csid = csptr->csid;
-			cs.registered = 0;  /* Mark as unregistered/disconnected */
-			
-			store = crdtstore_get_main_store();
-			if (store != NULL) {
-				if (crdtstore_put_chunkserver(store, &cs) < 0) {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"csdb: failed to update disconnected chunkserver in CRDT");
-				} else {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb: marked chunkserver as disconnected in CRDT: %u.%u.%u.%u:%"PRIu16,
-					        (csptr->ip>>24)&0xFF, (csptr->ip>>16)&0xFF, (csptr->ip>>8)&0xFF, csptr->ip&0xFF, csptr->port);
-				}
-			}
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb: marked chunkserver as disconnected in HA mode: %u.%u.%u.%u:%"PRIu16,
+			        (csptr->ip>>24)&0xFF, (csptr->ip>>16)&0xFF, (csptr->ip>>8)&0xFF, csptr->ip&0xFF, csptr->port);
 		}
 	}
 //	csdb_disconnect_check();
@@ -1126,89 +1093,10 @@ void csdb_force_reconnection(uint32_t ip, uint16_t port) {
 
 /* Sync chunkserver list from CRDT store in HA mode */
 void csdb_sync_from_crdt(void) {
-	mfs_chunkserver_t *cs_array = NULL;
-	uint32_t cs_count = 0;
-	uint32_t i;
-	csdbentry *e;
-	crdt_store_t *store;
-	
+	/* TODO: Implement non-CRDT based sync mechanism */
 	if (!ha_mode_enabled()) {
 		return;
 	}
 	
-	store = crdtstore_get_main_store();
-	if (store == NULL) {
-		return;
-	}
-	
-	/* Get all registered chunkservers from CRDT */
-	if (crdtstore_get_all_chunkservers(store, &cs_array, &cs_count) < 0) {
-		return;
-	}
-	
-	/* Add/update chunkservers that exist in CRDT but not in local db */
-	for (i = 0; i < cs_count; i++) {
-		mfs_chunkserver_t *cs = &cs_array[i];
-		
-		/* Find existing entry */
-		e = csdb_find_entry(cs->servip, cs->servport);
-		
-		/* Handle based on CRDT registration status */
-		if (cs->registered == 0) {
-			/* Chunkserver is marked as unregistered in CRDT */
-			if (e != NULL && e->eptr != NULL) {
-				/* It's connected locally but marked as disconnected in CRDT - disconnect it */
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb_sync_from_crdt: disconnecting chunkserver %u.%u.%u.%u:%u - marked as unregistered in CRDT",
-					(cs->servip>>24)&0xFF, (cs->servip>>16)&0xFF, (cs->servip>>8)&0xFF, cs->servip&0xFF, cs->servport);
-				e->disconnection_time = main_time();
-				e->eptr = NULL;
-				disconnected_servers++;
-				if (e->maintenance != MAINTENANCE_OFF) {
-					disconnected_servers_in_maintenance++;
-				}
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"csdb: disconnected servers counter incremented to %u (maintenance=%u)",disconnected_servers,disconnected_servers_in_maintenance);
-			}
-			/* If it's already disconnected or doesn't exist, nothing to do */
-			continue;
-		}
-		
-		/* Chunkserver is marked as registered in CRDT */
-		if (e != NULL && e->eptr != NULL) {
-			/* Already connected locally - skip */
-			continue;
-		}
-		
-		/* Add to local database if not present */
-		if (e == NULL) {
-			uint32_t hash = CSDBHASHFN(cs->servip, cs->servport);
-			e = malloc(sizeof(csdbentry));
-			passert(e);
-			e->ip = cs->servip;
-			e->port = cs->servport;
-			e->csid = cs->csid ? cs->csid : nextid++;
-			e->number = 0;
-			e->heavyloadts = 0;
-			e->load = 0;
-			e->maintenance_timeout = 0;
-			e->disconnection_time = main_time();
-			e->maintenance = MAINTENANCE_OFF;
-			e->eptr = NULL; /* Not connected locally */
-			e->next = csdbhash[hash];
-			csdbhash[hash] = e;
-			
-			if (e->csid < 65536 && csdbtab[e->csid] == NULL) {
-				csdbtab[e->csid] = e;
-			}
-			
-			disconnected_servers++;
-			
-			mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"csdb_sync_from_crdt: added chunkserver %u.%u.%u.%u:%u from CRDT (csid=%u)",
-				(cs->servip>>24)&0xFF, (cs->servip>>16)&0xFF, (cs->servip>>8)&0xFF, cs->servip&0xFF, 
-				cs->servport, e->csid);
-		}
-	}
-	
-	if (cs_array) {
-		free(cs_array);
-	}
+	mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"csdb_sync_from_crdt: CRDT sync disabled");
 }

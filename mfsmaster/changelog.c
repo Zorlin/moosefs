@@ -39,7 +39,6 @@
 #include "matomlserv.h"
 #include "cfg.h"
 #include "clocks.h"
-#include "crdtstore.h"
 #include "gossip.h"
 #include "hamaster.h"
 #include "raftconsensus.h"
@@ -115,11 +114,11 @@ static inline void changelog_store_logstring(uint64_t version,uint8_t *logstr,ui
 	matomlserv_broadcast_logstring(version,logstr,logstrsize);
 //	matomaserv_broadcast_logstring(version,(uint8_t*)printbuff,leng);
 
-	/* Ring-based log shipping to chunkservers */
-	extern void metasync_ship_to_ring(uint64_t version, const uint8_t *data, uint32_t length);
+	/* Ring-based log shipping */
+	extern void ringrepl_ship_entry(uint64_t version, const uint8_t *data, uint32_t length);
 	extern int raft_is_leader(void);
 	if (raft_is_leader()) {
-		metasync_ship_to_ring(version, logstr, logstrsize);
+		ringrepl_ship_entry(version, logstr, logstrsize);
 	}
 
 	if (ChangelogSecondsToRemember==0) {
@@ -229,17 +228,7 @@ void changelog_rotate(uint8_t rotate_flags) {
 }
 
 void changelog_mr(uint64_t version,const char *data) {
-	// HA Integration: Only leaders should propagate changelog entries
-	if (ha_mode_enabled() && raft_is_leader()) {
-		uint32_t data_len = strlen(data) + 1;
-		
-		// First send to all HA peers directly
-		gossip_broadcast_changelog_entry(version, data, data_len);
-		
-		// Then initiate ring shipping 
-		extern void metasync_ship_to_ring(uint64_t version, const uint8_t *data, uint32_t length);
-		metasync_ship_to_ring(version, (const uint8_t*)data, data_len);
-	}
+	/* Ring replication handles all distribution */
 	
 	if (ChangelogSaveMode==SAVEMODE_BACKGROUND) {
 		bgsaver_changelog(version,data);

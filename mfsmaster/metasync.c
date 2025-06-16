@@ -27,6 +27,7 @@
 #include "main.h"
 #include "hamaster.h"
 #include "raftconsensus.h"
+#include "ringrepl.h"
 
 /* Sync message types */
 #define METASYNC_VERSION_REQ    0x01
@@ -234,11 +235,39 @@ static uint32_t get_ring_successor(void) {
 
 /* Process metadata entry from peer */
 static void metasync_process_entry(uint64_t version, const uint8_t *data, uint32_t length) {
+    uint64_t old_metaversion = meta_version();
+    
     /* Directly replay the entry without CRDT */
     changelog_replay_entry(version, (const char *)data);
     
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "metasync: replayed entry v%"PRIu64" (%u bytes)", 
-            version, length);
+    uint64_t new_metaversion = meta_version();
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "metasync: replayed entry v%"PRIu64" (%u bytes) - metaversion %"PRIu64" -> %"PRIu64, 
+            version, length, old_metaversion, new_metaversion);
+}
+
+/* Callback to send a changelog entry to a peer */
+void metasync_send_entry_to_peer(void *userdata, uint64_t version, uint8_t *data, uint32_t length) {
+    uint32_t peerid = (uint32_t)(uintptr_t)userdata;
+    uint8_t *msg;
+    uint8_t *ptr;
+    uint32_t msglen = 1 + 8 + 4 + length; /* type + version + length + data */
+    
+    msg = malloc(msglen);
+    if (!msg) {
+        return;
+    }
+    
+    ptr = msg;
+    put8bit(&ptr, METASYNC_ENTRY);
+    put64bit(&ptr, version);
+    put32bit(&ptr, length);
+    memcpy(ptr, data, length);
+    
+    haconn_send_meta_sync_to_peer(peerid, msg, msglen);
+    free(msg);
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "metasync: sent entry v%"PRIu64" to peer %u (%u bytes)",
+            version, peerid, length);
 }
 
 /* Callback to send a changelog entry to a peer */
@@ -336,25 +365,19 @@ void metasync_handle_message(uint32_t peerid, const uint8_t *data, uint32_t leng
                 uint32_t entry_size = get32bit(&ptr);
                 
                 if (length >= 12 + entry_size) {
+                    /* Process the entry */
                     metasync_process_entry(version, ptr, entry_size);
                     
-                    /* Forward to next node in ring if we're not the leader */
-                    if (!raft_is_leader()) {
-                        uint32_t successor = get_ring_successor();
-                        uint8_t *fwd_msg = malloc(13 + entry_size);
-                        if (fwd_msg) {
-                            uint8_t *fwd_ptr = fwd_msg;
-                            put8bit(&fwd_ptr, METASYNC_ENTRY);
-                            put64bit(&fwd_ptr, version);
-                            put32bit(&fwd_ptr, entry_size);
-                            memcpy(fwd_ptr, ptr, entry_size);
-                            
-                            haconn_send_meta_sync_to_peer(successor, fwd_msg, 13 + entry_size);
-                            free(fwd_msg);
-                            
-                            mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "ring-ship: forwarded v%"PRIu64" to successor %u", 
-                                    version, successor);
-                        }
+                    /* Send ACK to sender */
+                    uint8_t ack_msg[10];
+                    uint8_t *ack_ptr = ack_msg;
+                    put8bit(&ack_ptr, RING_MSG_ACK);
+                    put64bit(&ack_ptr, version);
+                    haconn_send_meta_sync_to_peer(peerid, ack_msg, 9);
+                    
+                    /* Forward to next node in ring if enabled */
+                    if (cfg_getnum("HA_RING_FORWARD", 1) && !raft_is_leader()) {
+                        ringrepl_ship_entry(version, ptr, entry_size);
                     }
                 }
             }
@@ -370,6 +393,45 @@ void metasync_handle_message(uint32_t peerid, const uint8_t *data, uint32_t leng
                 mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: sync complete from peer %u", peerid);
             }
             pthread_mutex_unlock(&sync_state.mutex);
+            break;
+        }
+        
+        /* Ring replication messages */
+        case RING_MSG_BATCH_START: {
+            if (length >= 20) {
+                uint64_t start_version = get64bit(&ptr);
+                uint64_t end_version = get64bit(&ptr);
+                uint32_t sender_id = get32bit(&ptr);
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: batch start [%"PRIu64"-%"PRIu64"] from peer %u",
+                        start_version, end_version, sender_id);
+            }
+            break;
+        }
+        
+        case RING_MSG_BATCH_END: {
+            if (length >= 12) {
+                uint64_t end_version = get64bit(&ptr);
+                uint32_t count = get32bit(&ptr);
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: batch end v%"PRIu64" (%u entries) from peer %u",
+                        end_version, count, peerid);
+                
+                /* Send batch ACK */
+                uint8_t ack_msg[10];
+                uint8_t *ack_ptr = ack_msg;
+                put8bit(&ack_ptr, RING_MSG_ACK);
+                put64bit(&ack_ptr, end_version);
+                haconn_send_meta_sync_to_peer(peerid, ack_msg, 9);
+            }
+            break;
+        }
+        
+        case RING_MSG_ACK:
+        case RING_MSG_NACK:
+        case RING_MSG_RESYNC_REQ:
+        case RING_MSG_HEARTBEAT: {
+            /* Forward to ring replication handler */
+            extern void ringrepl_handle_message(uint32_t peerid, const uint8_t *data, uint32_t length);
+            ringrepl_handle_message(peerid, data - 1, length + 1); /* Include msgtype */
             break;
         }
         

@@ -132,6 +132,7 @@ am_mfsmaster_OBJECTS = mfsmaster-itree.$(OBJEXT) \
 	mfsmaster-haconn.$(OBJEXT) mfsmaster-crdtstore.$(OBJEXT) \
 	mfsmaster-raftconsensus.$(OBJEXT) mfsmaster-gossip.$(OBJEXT) \
 	mfsmaster-gvc.$(OBJEXT) mfsmaster-metasync.$(OBJEXT) \
+	mfsmaster-ringrepl.$(OBJEXT) \
 	../mfscommon/mfsmaster-main.$(OBJEXT) \
 	../mfscommon/mfsmaster-processname.$(OBJEXT) \
 	../mfscommon/mfsmaster-cfg.$(OBJEXT) \
@@ -286,6 +287,7 @@ am__depfiles_remade = ../mfscommon/$(DEPDIR)/mfsmaster-cfg.Po \
 	./$(DEPDIR)/mfsmaster-posixlocks.Po \
 	./$(DEPDIR)/mfsmaster-raftconsensus.Po \
 	./$(DEPDIR)/mfsmaster-restore.Po \
+	./$(DEPDIR)/mfsmaster-ringrepl.Po \
 	./$(DEPDIR)/mfsmaster-sessions.Po \
 	./$(DEPDIR)/mfsmaster-shardmgr.Po \
 	./$(DEPDIR)/mfsmaster-sharedpointer.Po \
@@ -560,6 +562,7 @@ mfsmaster_SOURCES = \
 	gossip.c gossip.h \
 	gvc.c gvc.h \
 	metasync.c metasync.h \
+	ringrepl.c ringrepl.h \
 	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \
@@ -900,6 +903,7 @@ include ./$(DEPDIR)/mfsmaster-posixacl.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-posixlocks.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-raftconsensus.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-restore.Po # am--include-marker
+include ./$(DEPDIR)/mfsmaster-ringrepl.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-sessions.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-shardmgr.Po # am--include-marker
 include ./$(DEPDIR)/mfsmaster-sharedpointer.Po # am--include-marker
@@ -1511,6 +1515,20 @@ mfsmaster-metasync.obj: metasync.c
 #	$(AM_V_CC)source='metasync.c' object='mfsmaster-metasync.obj' libtool=no \
 #	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
 #	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-metasync.obj `if test -f 'metasync.c'; then $(CYGPATH_W) 'metasync.c'; else $(CYGPATH_W) '$(srcdir)/metasync.c'; fi`
+
+mfsmaster-ringrepl.o: ringrepl.c
+	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-ringrepl.o -MD -MP -MF $(DEPDIR)/mfsmaster-ringrepl.Tpo -c -o mfsmaster-ringrepl.o `test -f 'ringrepl.c' || echo '$(srcdir)/'`ringrepl.c
+	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-ringrepl.Tpo $(DEPDIR)/mfsmaster-ringrepl.Po
+#	$(AM_V_CC)source='ringrepl.c' object='mfsmaster-ringrepl.o' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
+#	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-ringrepl.o `test -f 'ringrepl.c' || echo '$(srcdir)/'`ringrepl.c
+
+mfsmaster-ringrepl.obj: ringrepl.c
+	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT mfsmaster-ringrepl.obj -MD -MP -MF $(DEPDIR)/mfsmaster-ringrepl.Tpo -c -o mfsmaster-ringrepl.obj `if test -f 'ringrepl.c'; then $(CYGPATH_W) 'ringrepl.c'; else $(CYGPATH_W) '$(srcdir)/ringrepl.c'; fi`
+	$(AM_V_at)$(am__mv) $(DEPDIR)/mfsmaster-ringrepl.Tpo $(DEPDIR)/mfsmaster-ringrepl.Po
+#	$(AM_V_CC)source='ringrepl.c' object='mfsmaster-ringrepl.obj' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
+#	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -c -o mfsmaster-ringrepl.obj `if test -f 'ringrepl.c'; then $(CYGPATH_W) 'ringrepl.c'; else $(CYGPATH_W) '$(srcdir)/ringrepl.c'; fi`
 
 ../mfscommon/mfsmaster-main.o: ../mfscommon/main.c
 	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mfsmaster_CPPFLAGS) $(CPPFLAGS) $(mfsmaster_CFLAGS) $(CFLAGS) -MT ../mfscommon/mfsmaster-main.o -MD -MP -MF ../mfscommon/$(DEPDIR)/mfsmaster-main.Tpo -c -o ../mfscommon/mfsmaster-main.o `test -f '../mfscommon/main.c' || echo '$(srcdir)/'`../mfscommon/main.c
@@ -2131,6 +2149,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-posixlocks.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-raftconsensus.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-restore.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-ringrepl.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-sessions.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-shardmgr.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-sharedpointer.Po
@@ -2247,6 +2266,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/mfsmaster-posixlocks.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-raftconsensus.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-restore.Po
+	-rm -f ./$(DEPDIR)/mfsmaster-ringrepl.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-sessions.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-shardmgr.Po
 	-rm -f ./$(DEPDIR)/mfsmaster-sharedpointer.Po

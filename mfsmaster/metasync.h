@@ -38,4 +38,7 @@ void metasync_request_versions(uint32_t node_id, uint64_t from_version, uint64_t
 /* Send changelog entry to ring successor for log shipping */
 void metasync_ship_to_ring(uint64_t version, const uint8_t *data, uint32_t length);
 
+/* Callback to send a changelog entry to a peer (used by ringrepl) */
+void metasync_send_entry_to_peer(void *userdata, uint64_t version, uint8_t *data, uint32_t length);
+
 #endif /* _METASYNC_H_ */

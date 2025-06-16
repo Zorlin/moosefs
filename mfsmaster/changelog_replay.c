@@ -20,7 +20,6 @@
 #include "mfslog.h"
 #include "massert.h"
 #include "hamaster.h"
-#include "crdtstore.h"
 #include "main.h"
 
 /* Declare restore_line function */
@@ -143,38 +142,9 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
 
 /* Sync changelogs from a specific version */
 int changelog_replay_sync_from_version(uint64_t start_version) {
-    crdt_store_t *store;
-    uint64_t current_version;
-    uint64_t version;
-    int synced = 0;
-    
-    store = crdtstore_get_main_store();
-    if (store == NULL) {
-        return -1;
-    }
-    
-    pthread_mutex_lock(&replay_mutex);
-    current_version = highest_replayed_version;
-    pthread_mutex_unlock(&replay_mutex);
-    
-    /* Sync all versions from start_version to current */
-    for (version = start_version; version <= current_version; version++) {
-        crdt_entry_t *entry;
-        
-        /* Try to get this version from CRDT store */
-        entry = crdtstore_get(store, version);
-        if (entry != NULL && entry->value != NULL) {
-            /* Found the changelog entry, replay it */
-            if (changelog_replay_entry(version, (const char *)entry->value) == 0) {
-                synced++;
-            }
-        }
-    }
-    
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "changelog_replay: synced %d entries from version %"PRIu64" to %"PRIu64,
-            synced, start_version, current_version);
-    
-    return synced;
+    /* TODO: Implement non-CRDT based sync mechanism */
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: sync_from_version not implemented without CRDT");
+    return 0;
 }
 
 /* Get the highest replayed version */

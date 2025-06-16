@@ -51,7 +51,6 @@
 #include "hamaster.h"
 #include "haconn.h"
 #include "raftconsensus.h"
-#include "crdtstore.h"
 #include "random.h"
 #include "sizestr.h"
 #include "mfslog.h"
@@ -1564,54 +1563,8 @@ void matocsserv_calculate_space(void) {
 	usagemax = 0;
 	usagemin = 0;
 	
-	/* In HA mode, use CRDT data for space calculation to get all chunkservers */
-	if (ha_mode_enabled() && !raft_is_leader()) {
-		mfs_chunkserver_t *cs_array = NULL;
-		uint32_t cs_count = 0;
-		uint32_t i;
-		crdt_store_t *store = crdtstore_get_main_store();
-		
-		if (store != NULL && crdtstore_get_all_chunkservers(store, &cs_array, &cs_count) == 0) {
-			for (i = 0; i < cs_count; i++) {
-				mfs_chunkserver_t *cs = &cs_array[i];
-				if (cs->registered && cs->totalspace > 0) {
-					dusage = cs->usedspace;
-					dusage /= cs->totalspace;
-					if (dusage<0.0) {
-						dusage = 0.0;
-					}
-					if (dusage>1.0) {
-						dusage = 1.0;
-					}
-					mpusage = 100000 * dusage;
-					if (usagemax==0) {
-						usagemax = mpusage;
-						usagemin = mpusage;
-					} else {
-						if (mpusage > usagemax) {
-							usagemax = mpusage;
-						}
-						if (mpusage < usagemin) {
-							usagemin = mpusage;
-						}
-					}
-					tspace += cs->totalspace;
-					uspace += cs->usedspace;
-					if (cs->usedspace > muspace) {
-						muspace = cs->usedspace;
-					}
-					if (cs->totalspace > mtspace) {
-						mtspace = cs->totalspace;
-					}
-				}
-			}
-			if (cs_array) {
-				free(cs_array);
-			}
-		}
-	} else {
-		/* Leader uses direct connections */
-		for (eptr = matocsservhead ; eptr ; eptr=eptr->next) {
+	/* Calculate space from directly connected chunkservers */
+	for (eptr = matocsservhead ; eptr ; eptr=eptr->next) {
 			if (eptr->mode!=KILL && eptr->totalspace>0) {
 				dusage = eptr->usedspace;
 				dusage /= eptr->totalspace;
@@ -1641,7 +1594,6 @@ void matocsserv_calculate_space(void) {
 				if (eptr->totalspace > mtspace) {
 					mtspace = eptr->totalspace;
 				}
-			}
 		}
 	}
 	switch (ReserveSpaceMode) {
@@ -2768,32 +2720,13 @@ void matocsserv_register(matocsserventry *eptr,const uint8_t *data,uint32_t leng
 				}
 			}
 			
-			/* Sync chunkserver registration through CRDT if HA mode is enabled - only leader updates */
-			if (ha_mode_enabled() && raft_is_leader()) {
-				mfs_chunkserver_t cs;
-				crdt_store_t *store = crdtstore_get_main_store();
-				
-				memset(&cs, 0, sizeof(cs));
-				cs.servip = eptr->servip;
-				cs.servport = eptr->servport;
-				cs.csid = csid;
-				cs.usedspace = eptr->usedspace;
-				cs.totalspace = eptr->totalspace;
-				cs.chunkscount = eptr->chunkscount;
-				cs.todelusedspace = eptr->todelusedspace;
-				cs.todeltotalspace = eptr->todeltotalspace;
-				cs.todelchunkscount = eptr->todelchunkscount;
-				cs.version = eptr->version;
-				cs.timeout = eptr->timeout;
-				cs.registered = 1;
-				
-				if (crdtstore_put_chunkserver(store, &cs) < 0) {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"failed to sync chunkserver %s registration to CRDT", eptr->servdesc);
+			/* Log chunkserver registration in HA mode */
+			if (ha_mode_enabled()) {
+				if (raft_is_leader()) {
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"leader: chunkserver %s registered", eptr->servdesc);
 				} else {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"leader: chunkserver %s registration synced to CRDT", eptr->servdesc);
+					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"follower: chunkserver %s registered locally", eptr->servdesc);
 				}
-			} else if (ha_mode_enabled() && !raft_is_leader()) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"follower: chunkserver %s registered locally but not synced to CRDT", eptr->servdesc);
 			}
 			us = (double)(eptr->usedspace)/(double)(1024*1024*1024);
 			ts = (double)(eptr->totalspace)/(double)(1024*1024*1024);
@@ -2963,30 +2896,15 @@ void matocsserv_space(matocsserventry *eptr,const uint8_t *data,uint32_t length)
 		}
 	}
 	
-	/* Update CRDT with new space information - only leader should update to avoid double counting */
-	if (ha_mode_enabled() && raft_is_leader() && eptr->servip && eptr->servport) {
-		mfs_chunkserver_t cs;
-		crdt_store_t *store = crdtstore_get_main_store();
-		
-		if (store != NULL && crdtstore_get_chunkserver(store, eptr->servip, eptr->servport, &cs) == 0) {
-			/* Update space information */
-			cs.usedspace = eptr->usedspace;
-			cs.totalspace = eptr->totalspace;
-			cs.chunkscount = eptr->chunkscount;
-			cs.todelusedspace = eptr->todelusedspace;
-			cs.todeltotalspace = eptr->todeltotalspace;
-			cs.todelchunkscount = eptr->todelchunkscount;
-			
-			if (crdtstore_put_chunkserver(store, &cs) < 0) {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"csdb: failed to update chunkserver space in CRDT");
-			} else {
-				mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"leader: updated chunkserver %s space in CRDT (used=%"PRIu64", total=%"PRIu64")",
-				        eptr->servdesc, cs.usedspace, cs.totalspace);
-			}
+	/* Log space update in HA mode */
+	if (ha_mode_enabled()) {
+		if (raft_is_leader()) {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"leader: updated space info for chunkserver %s (used=%"PRIu64", total=%"PRIu64")",
+			        eptr->servdesc, eptr->usedspace, eptr->totalspace);
+		} else {
+			mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"follower: received space update from %s (used=%"PRIu64", total=%"PRIu64")",
+			        eptr->servdesc, eptr->usedspace, eptr->totalspace);
 		}
-	} else if (ha_mode_enabled() && !raft_is_leader()) {
-		mfs_log(MFSLOG_SYSLOG,MFSLOG_DEBUG,"follower: received space update from %s but not updating CRDT (used=%"PRIu64", total=%"PRIu64")",
-		        eptr->servdesc, eptr->usedspace, eptr->totalspace);
 	}
 }
 
@@ -3578,15 +3496,9 @@ void matocsserv_disconnection_loop(void) {
 			}
 			csdb_lost_connection(eptr->csptr);
 			
-			/* Sync chunkserver disconnection through CRDT if HA mode is enabled */
+			/* Log chunkserver disconnection in HA mode */
 			if (ha_mode_enabled() && eptr->servip > 0 && eptr->servport > 0) {
-				crdt_store_t *store = crdtstore_get_main_store();
-				
-				if (crdtstore_remove_chunkserver(store, eptr->servip, eptr->servport) < 0) {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_WARNING,"failed to sync chunkserver %s disconnection to CRDT", eptr->servdesc);
-				} else {
-					mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s disconnection synced to CRDT", eptr->servdesc);
-				}
+				mfs_log(MFSLOG_SYSLOG,MFSLOG_INFO,"chunkserver %s disconnected in HA mode", eptr->servdesc);
 			}
 			tcpclose(eptr->sock);
 			if (eptr->input_packet) {

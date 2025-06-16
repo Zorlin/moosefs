@@ -59,6 +59,7 @@ mfsmaster_SOURCES = \
 	gossip.c gossip.h \
 	gvc.c gvc.h \
 	metasync.c metasync.h \
+	ringrepl.c ringrepl.h \
 	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \

@@ -57,7 +57,7 @@
 #include "filesystem.h"
 #include "metadata.h"
 #include "hamaster.h"
-#include "crdtstore.h"
+/* #include "crdtstore.h" - CRDT support removed */
 #include "gvc.h"
 #include "datapack.h"
 #include "sockets.h"
@@ -1304,7 +1304,7 @@ int meta_downloadall(int socket) {
 		fs_printinfo();
 	}
 	mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metadata download ok");
-	/* HA Mode: Sync any missing metadata via CRDT after download */
+	/* HA Mode: Sync any missing metadata via ring replication after download */
 	if (ha_mode_enabled()) {
 		if (ha_metadata_sync() < 0) {
 			mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"HA metadata sync failed after download - continuing anyway");
@@ -1574,8 +1574,11 @@ int meta_loadall(void) {
 			
 			if (ha_node_id > 0 && ha_peers != NULL && strlen(ha_peers) > 0) {
 				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA mode detected (node_id=%u, peers=%s) - attempting cluster sync as fallback...", ha_node_id, ha_peers);
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metaversion before cluster sync: %"PRIu64, metaversion);
+				extern int crdt_cluster_sync_attempt(void);
 				if (crdt_cluster_sync_attempt() == 0) {
 					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"cluster sync successful - metadata loaded from peer");
+					mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metaversion after cluster sync: %"PRIu64, metaversion);
 					return 0;
 				}
 			} else {
@@ -2087,19 +2090,23 @@ int meta_init(void) {
 	}
 	if (emptystart==0) {
 		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"loading metadata ...");
+		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metaversion before load: %"PRIu64, metaversion);
 		if (meta_loadall()<0) {
 			return -1;
 		}
 		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metadata file has been loaded");
-		/* HA Mode: Update changelog replay version and sync any missing metadata via CRDT */
+		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metaversion after load: %"PRIu64, metaversion);
+		/* HA Mode: Update changelog replay version and sync any missing metadata via ring replication */
 		if (ha_mode_enabled()) {
 			/* Update changelog replay version to match loaded metadata */
+			mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"HA: updating changelog_replay version to %"PRIu64, metaversion);
 			changelog_replay_update_version(metaversion);
 			
 			if (ha_metadata_sync() < 0) {
 				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_ERR,"HA metadata sync failed - cannot continue without sync");
 				return -1;
 			}
+			mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metaversion after HA sync: %"PRIu64, metaversion);
 		}
 	} else {
 		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_ERR,"can't run master without metadata");

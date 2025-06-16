@@ -53,7 +53,7 @@ typedef struct raft_peer {
 	struct raft_peer *next;
 } raft_peer_t;
 
-#include "crdtstore.h" /* For hlc_timestamp_t */
+/* #include "crdtstore.h" - CRDT support removed */
 
 /* Global Raft context - single group, no sharding */
 typedef struct raft_context {
