@@ -21,4 +21,7 @@ int changelog_replay_sync_from_version(uint64_t start_version);
 /* Get the highest replayed version */
 uint64_t changelog_replay_get_version(void);
 
+/* Update the highest replayed version after metadata load */
+void changelog_replay_update_version(uint64_t version);
+
 #endif /* _CHANGELOG_REPLAY_H_ */

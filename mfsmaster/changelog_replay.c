@@ -187,3 +187,14 @@ uint64_t changelog_replay_get_version(void) {
     
     return version;
 }
+
+/* Update the highest replayed version after metadata load */
+void changelog_replay_update_version(uint64_t version) {
+    pthread_mutex_lock(&replay_mutex);
+    if (version > highest_replayed_version) {
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "changelog_replay: updating version from %"PRIu64" to %"PRIu64" after metadata load", 
+                highest_replayed_version, version);
+        highest_replayed_version = version;
+    }
+    pthread_mutex_unlock(&replay_mutex);
+}

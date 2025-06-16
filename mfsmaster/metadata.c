@@ -66,6 +66,7 @@
 #include "massert.h"
 #include "merger.h"
 #include "changelog.h"
+#include "changelog_replay.h"
 #include "clocks.h"
 #include "matoclserv.h"
 #include "matocsserv.h"
@@ -2090,10 +2091,14 @@ int meta_init(void) {
 			return -1;
 		}
 		mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_INFO,"metadata file has been loaded");
-		/* HA Mode: Sync any missing metadata via CRDT */
+		/* HA Mode: Update changelog replay version and sync any missing metadata via CRDT */
 		if (ha_mode_enabled()) {
+			/* Update changelog replay version to match loaded metadata */
+			changelog_replay_update_version(metaversion);
+			
 			if (ha_metadata_sync() < 0) {
-				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_WARNING,"HA metadata sync failed - continuing anyway");
+				mfs_log(MFSLOG_SYSLOG_STDERR,MFSLOG_ERR,"HA metadata sync failed - cannot continue without sync");
+				return -1;
 			}
 		}
 	} else {

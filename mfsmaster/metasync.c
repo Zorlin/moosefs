@@ -18,6 +18,7 @@
 #include "metasync.h"
 #include "metadata.h"
 #include "changelog_replay.h"
+#include "changelog.h"
 #include "haconn.h"
 #include "clocks.h"
 #include "mfslog.h"
@@ -240,6 +241,31 @@ static void metasync_process_entry(uint64_t version, const uint8_t *data, uint32
             version, length);
 }
 
+/* Callback to send a changelog entry to a peer */
+static void metasync_send_entry_to_peer(void *userdata, uint64_t version, uint8_t *data, uint32_t length) {
+    uint32_t peerid = (uint32_t)(uintptr_t)userdata;
+    uint8_t *msg;
+    uint8_t *ptr;
+    uint32_t msglen = 1 + 8 + 4 + length; /* type + version + length + data */
+    
+    msg = malloc(msglen);
+    if (!msg) {
+        return;
+    }
+    
+    ptr = msg;
+    put8bit(&ptr, METASYNC_ENTRY);
+    put64bit(&ptr, version);
+    put32bit(&ptr, length);
+    memcpy(ptr, data, length);
+    
+    haconn_send_meta_sync_to_peer(peerid, msg, msglen);
+    free(msg);
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "metasync: sent entry v%"PRIu64" to peer %u (%u bytes)",
+            version, peerid, length);
+}
+
 /* Handle incoming metadata sync messages */
 void metasync_handle_message(uint32_t peerid, const uint8_t *data, uint32_t length) {
     const uint8_t *ptr = data;
@@ -286,11 +312,16 @@ void metasync_handle_message(uint32_t peerid, const uint8_t *data, uint32_t leng
             if (length >= 16) {
                 uint64_t from_version = get64bit(&ptr);
                 uint64_t to_version = get64bit(&ptr);
-                /* TODO: Implement changelog-based range retrieval */
-                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: peer %u requesting range %"PRIu64"-%"PRIu64" (not implemented yet)", 
+                
+                mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: peer %u requested versions [%"PRIu64"-%"PRIu64"]",
                         peerid, from_version, to_version);
                 
-                /* Send done message for now */
+                /* Use the same mechanism as metalogger sync */
+                changelog_get_old_changes(from_version,
+                    metasync_send_entry_to_peer, (void*)(uintptr_t)peerid,
+                    (to_version - from_version + 1));
+                
+                /* Send done message when finished */
                 uint8_t done_msg[1];
                 done_msg[0] = METASYNC_DONE;
                 haconn_send_meta_sync_to_peer(peerid, done_msg, 1);
