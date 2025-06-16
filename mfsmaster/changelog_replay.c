@@ -142,8 +142,27 @@ int changelog_replay_entry(uint64_t version, const char *entry) {
 
 /* Sync changelogs from a specific version */
 int changelog_replay_sync_from_version(uint64_t start_version) {
-    /* TODO: Implement non-CRDT based sync mechanism */
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "changelog_replay: sync_from_version not implemented without CRDT");
+    uint64_t current_version;
+    uint64_t end_version;
+    
+    pthread_mutex_lock(&replay_mutex);
+    current_version = highest_replayed_version;
+    pthread_mutex_unlock(&replay_mutex);
+    
+    if (start_version <= current_version) {
+        /* Already have these versions */
+        return 0;
+    }
+    
+    /* Request missing versions from peers */
+    end_version = start_version + 1000; /* Request in chunks of 1000 */
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "changelog_replay: requesting missing versions [%"PRIu64"-%"PRIu64"]",
+            start_version, end_version);
+    
+    /* This will trigger ha_request_missing_changelog_range */
+    ha_request_missing_changelog_range(start_version, end_version);
+    
     return 0;
 }
 

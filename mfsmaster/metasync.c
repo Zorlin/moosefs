@@ -212,25 +212,41 @@ static void metasync_process_version_response(uint32_t peerid, uint64_t peer_ver
 
 /* Ring-based log shipping implementation */
 static uint32_t get_ring_successor(void) {
-    /* TODO: Implement proper ring topology based on node IDs */
-    /* For now, return next node ID in sequence */
+    const char *peers = ha_get_peers();
     uint32_t my_id = ha_get_node_id();
-    uint32_t next_id = my_id + 1;
+    uint32_t successor_id = 0;
+    uint32_t peer_count = 0;
+    uint32_t peer_position = 1;
     
-    /* Wrap around if needed (assuming max 5 masters) */
-    if (next_id > 5) {
-        next_id = 1;
+    if (!peers || strlen(peers) == 0) {
+        return 0; /* No peers configured */
     }
     
-    /* Skip self */
-    if (next_id == my_id) {
-        next_id++;
-        if (next_id > 5) {
-            next_id = 1;
-        }
+    /* Count total peers to know when to wrap around */
+    char *peers_copy = strdup(peers);
+    char *peer = strtok(peers_copy, ",");
+    while (peer) {
+        peer_count++;
+        peer = strtok(NULL, ",");
+    }
+    free(peers_copy);
+    
+    /* Find our successor in the ring */
+    if (my_id < peer_count) {
+        successor_id = my_id + 1; /* Next in sequence */
+    } else {
+        successor_id = 1; /* Wrap to first peer */
     }
     
-    return next_id;
+    /* If successor would be self (shouldn't happen), skip to next */
+    if (successor_id == my_id) {
+        successor_id = (successor_id % peer_count) + 1;
+    }
+    
+    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "ring topology: my_id=%u, peer_count=%u, successor=%u", 
+            my_id, peer_count, successor_id);
+    
+    return successor_id;
 }
 
 /* Process metadata entry from peer */
@@ -270,30 +286,6 @@ void metasync_send_entry_to_peer(void *userdata, uint64_t version, uint8_t *data
             version, peerid, length);
 }
 
-/* Callback to send a changelog entry to a peer */
-static void metasync_send_entry_to_peer(void *userdata, uint64_t version, uint8_t *data, uint32_t length) {
-    uint32_t peerid = (uint32_t)(uintptr_t)userdata;
-    uint8_t *msg;
-    uint8_t *ptr;
-    uint32_t msglen = 1 + 8 + 4 + length; /* type + version + length + data */
-    
-    msg = malloc(msglen);
-    if (!msg) {
-        return;
-    }
-    
-    ptr = msg;
-    put8bit(&ptr, METASYNC_ENTRY);
-    put64bit(&ptr, version);
-    put32bit(&ptr, length);
-    memcpy(ptr, data, length);
-    
-    haconn_send_meta_sync_to_peer(peerid, msg, msglen);
-    free(msg);
-    
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_DEBUG, "metasync: sent entry v%"PRIu64" to peer %u (%u bytes)",
-            version, peerid, length);
-}
 
 /* Handle incoming metadata sync messages */
 void metasync_handle_message(uint32_t peerid, const uint8_t *data, uint32_t length) {
@@ -581,11 +573,17 @@ void metasync_request_versions(uint32_t node_id, uint64_t from_version, uint64_t
     put64bit(&ptr, from_version);
     put64bit(&ptr, to_version);
     
-    /* Send to specific peer */
-    haconn_send_meta_sync_to_peer(node_id, msg, 17);
-    
-    mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: requesting versions %"PRIu64"-%"PRIu64" from node %u", 
-            from_version, to_version, node_id);
+    if (node_id == 0) {
+        /* Broadcast to all peers */
+        haconn_send_meta_sync(msg, 17);
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: requesting versions %"PRIu64"-%"PRIu64" from all peers", 
+                from_version, to_version);
+    } else {
+        /* Send to specific peer */
+        haconn_send_meta_sync_to_peer(node_id, msg, 17);
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "metasync: requesting versions %"PRIu64"-%"PRIu64" from node %u", 
+                from_version, to_version, node_id);
+    }
 }
 
 /* Send changelog entry to ring successor for log shipping */

@@ -190,9 +190,11 @@ void ha_request_missing_changelog_range(uint64_t start_version, uint64_t end_ver
         count = changelog_get_old_changes(start_version, ha_replay_changelog_entry, NULL, limit);
         mfs_log(MFSLOG_SYSLOG, MFSLOG_INFO, "HA: replayed %u changelog entries from local buffer", count);
     } else {
-        /* Need to request from peers - for now, trigger metadata resync */
-        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "HA: changelog entries before %"PRIu64" not available locally (min=%"PRIu64"), need peer sync", 
+        /* Need to request from peers */
+        mfs_log(MFSLOG_SYSLOG, MFSLOG_WARNING, "HA: changelog entries before %"PRIu64" not available locally (min=%"PRIu64"), requesting from peers", 
                 start_version, min_version);
-        /* TODO: Request from peers via haconn */
+        
+        /* Request from peers using metasync range request */
+        metasync_request_versions(0, start_version, end_version); /* 0 = broadcast to all peers */
     }
 }

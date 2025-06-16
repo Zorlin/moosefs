@@ -327,7 +327,7 @@ static void ringrepl_send_batch(uint32_t peer_id) {
     put8bit(&ptr, RING_MSG_BATCH_START);
     put64bit(&ptr, start_version);
     put64bit(&ptr, end_version);
-    put32bit(&ptr, peer_id);
+    put32bit(&ptr, ha_get_node_id());  /* Send our node ID, not peer's */
     haconn_send_meta_sync_to_peer(peer_id, msg, 21);
     
     /* Send entries from changelog buffer */
